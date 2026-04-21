@@ -1,0 +1,6 @@
+/* Theme application — body-level colour and font wiring */
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
