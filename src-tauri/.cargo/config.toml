@@ -1,0 +1,9 @@
+
+[env]
+OCR_TEST_API_URL = "http://localhost:11434/v1"
+OCR_TEST_API_KEY = ""
+OCR_TEST_OCR_MODEL = "lightonocr"
+OCR_TEST_EXTRACTION_URL = "http://localhost:11434/v1"
+OCR_TEST_EXTRACTION_API_KEY = ""
+OCR_TEST_EXTRACTION_MODEL = "qwen2.5"
+

@@ -2,8 +2,8 @@ mod export;
 mod keyring_store;
 mod logger;
 mod ocr_client;
-mod receipt;
-mod scan;
+pub mod receipt;
+pub mod scan;
 mod settings;
 
 use logger::{emit_log, LogLevel, ProgressEvent};
