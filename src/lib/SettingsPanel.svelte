@@ -3,55 +3,95 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
 
-  const DEFAULT_COLUMNS = ['date', 'category', 'entity', 'amount', 'payment_method'];
+  const DEFAULT_SCHEMA_KEYS = ['date', 'category', 'entity', 'amount', 'payment_method'];
+
+  type SystemPrompt = { id: string; name: string; content: string };
 
   // Persisted settings
   let url = $state('');
   let model = $state('');
+  let extractionUrl = $state('');
   let extractionModel = $state('');
   let receiptDir = $state('');
-  let columns: string[] = $state([...DEFAULT_COLUMNS]);
+  let jsonSchemaKeys: string[] = $state([...DEFAULT_SCHEMA_KEYS]);
+  let systemPrompts: SystemPrompt[] = $state([]);
+  let activePromptId = $state('');
+  let promptContent = $state('');
 
-  // Write-only API key field — cleared after save, never stored reactively
+  // Write-only API key fields — cleared after save, never stored reactively
   let keyInput = $state('');
   let keyStored = $state(false);
+  let extractionKeyInput = $state('');
+  let extractionKeyStored = $state(false);
 
   // Ping state
   type PingStatus = 'idle' | 'loading' | 'ok' | 'fail';
   let pingStatus: PingStatus = $state('idle');
 
-  // Models dropdown
+  // OCR models dropdown
   let models: string[] = $state([]);
   let modelsLoading = $state(false);
   let modelsError = $state('');
 
+  // Text Processing models dropdown
+  let extractionModels: string[] = $state([]);
+  let extractionModelsLoading = $state(false);
+  let extractionModelsError = $state('');
+
   // Save feedback
   let saveMsg = $state('');
 
-  // CSV columns drag state
+  // Schema keys drag state
   let draggingIdx: number | null = $state(null);
   let dropTargetIdx: number | null = $state(null);
 
-  // New column input
-  let newCol = $state('');
+  // New schema key input
+  let newKey = $state('');
+
+  // New system prompt version name
+  let newVersionName = $state('');
+
+  // Keep promptContent in sync with the currently selected prompt.
+  $effect(() => {
+    const p = systemPrompts.find((sp) => sp.id === activePromptId);
+    if (p) promptContent = p.content;
+  });
 
   onMount(async () => {
     try {
-      const s = await invoke<{ url: string; ocr_model: string; extraction_model: string; receipt_dir: string; csv_columns: string[] }>('get_settings');
+      const s = await invoke<{
+        url: string;
+        ocr_model: string;
+        extraction_url: string;
+        extraction_model: string;
+        receipt_dir: string;
+        json_schema_keys: string[];
+        system_prompts: SystemPrompt[];
+        active_system_prompt_id: string;
+      }>('get_settings');
       url = s.url ?? '';
       model = s.ocr_model ?? '';
+      extractionUrl = s.extraction_url ?? '';
       extractionModel = s.extraction_model ?? '';
       receiptDir = s.receipt_dir ?? '';
-      columns = s.csv_columns?.length ? s.csv_columns : [...DEFAULT_COLUMNS];
+      jsonSchemaKeys = s.json_schema_keys?.length ? s.json_schema_keys : [...DEFAULT_SCHEMA_KEYS];
+      systemPrompts = s.system_prompts ?? [];
+      activePromptId = s.active_system_prompt_id ?? systemPrompts[0]?.id ?? '';
     } catch {
       // no saved settings yet
     }
-    // Check if a key is stored (do not read its value)
+    // Check if keys are stored (do not read their values)
     try {
       const k = await invoke<string>('get_api_key');
       keyStored = k.length > 0;
     } catch {
       keyStored = false;
+    }
+    try {
+      const k = await invoke<string>('get_extraction_api_key');
+      extractionKeyStored = k.length > 0;
+    } catch {
+      extractionKeyStored = false;
     }
   });
 
@@ -75,11 +115,25 @@
       const list = await invoke<{ id: string }[]>('list_models', { url, key });
       models = list.map((m) => m.id);
       if (!model && models.length) model = models[0];
-      if (!extractionModel && models.length) extractionModel = models[0];
     } catch (e: unknown) {
       modelsError = e instanceof Error ? e.message : String(e);
     } finally {
       modelsLoading = false;
+    }
+  }
+
+  async function loadExtractionModels() {
+    extractionModelsLoading = true;
+    extractionModelsError = '';
+    try {
+      const key = await invoke<string>('get_extraction_api_key').catch(() => '');
+      const list = await invoke<{ id: string }[]>('list_models', { url: extractionUrl, key });
+      extractionModels = list.map((m) => m.id);
+      if (!extractionModel && extractionModels.length) extractionModel = extractionModels[0];
+    } catch (e: unknown) {
+      extractionModelsError = e instanceof Error ? e.message : String(e);
+    } finally {
+      extractionModelsLoading = false;
     }
   }
 
@@ -96,21 +150,62 @@
     models = [];
   }
 
+  async function saveExtractionApiKey() {
+    if (!extractionKeyInput) return;
+    await invoke('set_extraction_api_key', { key: extractionKeyInput });
+    extractionKeyInput = '';
+    extractionKeyStored = true;
+  }
+
+  async function clearExtractionApiKey() {
+    await invoke('delete_extraction_api_key');
+    extractionKeyStored = false;
+    extractionModels = [];
+  }
+
   async function pickDirectory() {
     const selected = await open({ directory: true, multiple: false });
     if (typeof selected === 'string') receiptDir = selected;
   }
 
+  function updateCurrentVersion() {
+    const idx = systemPrompts.findIndex((p) => p.id === activePromptId);
+    if (idx === -1) return;
+    const next = [...systemPrompts];
+    next[idx] = { ...next[idx], content: promptContent };
+    systemPrompts = next;
+  }
+
+  function saveAsNewVersion() {
+    const name = newVersionName.trim();
+    if (!name) return;
+    const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : `prompt-${Date.now()}`;
+    systemPrompts = [...systemPrompts, { id, name, content: promptContent }];
+    activePromptId = id;
+    newVersionName = '';
+  }
+
   async function saveSettings() {
     await invoke('save_settings', {
-      settings: { url, ocr_model: model, extraction_model: extractionModel, receipt_dir: receiptDir, csv_columns: columns },
+      settings: {
+        url,
+        ocr_model: model,
+        extraction_url: extractionUrl,
+        extraction_model: extractionModel,
+        receipt_dir: receiptDir,
+        json_schema_keys: jsonSchemaKeys,
+        system_prompts: systemPrompts,
+        active_system_prompt_id: activePromptId,
+      },
     });
     saveMsg = 'Saved';
     setTimeout(() => (saveMsg = ''), 2000);
   }
 
   // Drag-and-drop helpers
-  // Reorder happens on ondrop, not ondragover — mutating columns mid-drag
+  // Reorder happens on ondrop, not ondragover — mutating the list mid-drag
   // destroys the dragged DOM node in WebKit's keyed list re-render.
   function onDragStart(e: DragEvent, i: number) {
     e.dataTransfer?.setData('text/plain', String(i));
@@ -125,10 +220,10 @@
   function onDrop(e: DragEvent, i: number) {
     e.preventDefault();
     if (draggingIdx !== null && draggingIdx !== i) {
-      const next = [...columns];
+      const next = [...jsonSchemaKeys];
       const [moved] = next.splice(draggingIdx, 1);
       next.splice(i, 0, moved);
-      columns = next;
+      jsonSchemaKeys = next;
     }
     draggingIdx = null;
     dropTargetIdx = null;
@@ -139,15 +234,15 @@
     dropTargetIdx = null;
   }
 
-  function removeColumn(i: number) {
-    columns = columns.filter((_, idx) => idx !== i);
+  function removeKey(i: number) {
+    jsonSchemaKeys = jsonSchemaKeys.filter((_, idx) => idx !== i);
   }
 
-  function addColumn() {
-    const trimmed = newCol.trim();
-    if (!trimmed || columns.includes(trimmed)) return;
-    columns = [...columns, trimmed];
-    newCol = '';
+  function addKey() {
+    const trimmed = newKey.trim();
+    if (!trimmed || jsonSchemaKeys.includes(trimmed)) return;
+    jsonSchemaKeys = [...jsonSchemaKeys, trimmed];
+    newKey = '';
   }
 </script>
 
@@ -223,19 +318,96 @@
     {/if}
   </section>
 
-  <!-- \u2500\u2500 Extraction Model \u2500\u2500 -->
+  <!-- \u2500\u2500 Text Processing Endpoint \u2500\u2500 -->
   <section class="settings-section">
-    <h3 class="section-heading">Extraction Model</h3>
+    <h3 class="section-heading">Text Processing Endpoint</h3>
     <div class="field-row">
-      <select class="input" bind:value={extractionModel} aria-label="Extraction model" disabled={modelsLoading}>
-        {#if models.length === 0}
+      <input
+        class="input"
+        type="url"
+        placeholder="http://localhost:11434"
+        bind:value={extractionUrl}
+        aria-label="Text Processing URL"
+      />
+    </div>
+  </section>
+
+  <!-- \u2500\u2500 Text Processing API Key \u2500\u2500 -->
+  <section class="settings-section">
+    <h3 class="section-heading">Text Processing API Key</h3>
+    {#if extractionKeyStored}
+      <div class="field-row">
+        <span class="key-stored-hint">Key stored in system keychain</span>
+        <button class="btn btn--danger" onclick={clearExtractionApiKey}>Clear</button>
+      </div>
+    {:else}
+      <div class="field-row">
+        <input
+          class="input"
+          type="password"
+          placeholder="sk-\u2026"
+          bind:value={extractionKeyInput}
+          aria-label="Text Processing API key"
+          autocomplete="new-password"
+        />
+        <button class="btn btn--primary" onclick={saveExtractionApiKey} disabled={!extractionKeyInput}>Save key</button>
+      </div>
+    {/if}
+  </section>
+
+  <!-- \u2500\u2500 Text Processing Model \u2500\u2500 -->
+  <section class="settings-section">
+    <h3 class="section-heading">Text Processing Model</h3>
+    <div class="field-row">
+      <select class="input" bind:value={extractionModel} aria-label="Text Processing model" disabled={extractionModelsLoading}>
+        {#if extractionModels.length === 0}
           <option value={extractionModel}>{extractionModel || 'No models loaded'}</option>
         {:else}
-          {#each models as m}
+          {#each extractionModels as m}
             <option value={m}>{m}</option>
           {/each}
         {/if}
       </select>
+      <button class="btn" onclick={loadExtractionModels} disabled={!extractionUrl || extractionModelsLoading}>
+        {extractionModelsLoading ? 'Loading\u2026' : 'Load models'}
+      </button>
+    </div>
+    {#if extractionModelsError}
+      <p class="field-error">{extractionModelsError}</p>
+    {/if}
+  </section>
+
+  <!-- \u2500\u2500 System Prompt \u2500\u2500 -->
+  <section class="settings-section">
+    <h3 class="section-heading">System Prompt</h3>
+    <p class="section-hint">Use <code>{'{schema_keys}'}</code> to inject the JSON schema keys into the prompt.</p>
+    <div class="field-row">
+      <select class="input" bind:value={activePromptId} aria-label="Active system prompt">
+        {#if systemPrompts.length === 0}
+          <option value="">(none)</option>
+        {:else}
+          {#each systemPrompts as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        {/if}
+      </select>
+      <button class="btn" onclick={updateCurrentVersion} disabled={!activePromptId}>Update Current Version</button>
+    </div>
+    <textarea
+      class="input prompt-textarea"
+      bind:value={promptContent}
+      aria-label="System prompt content"
+      rows="8"
+    ></textarea>
+    <div class="field-row field-row--tight">
+      <input
+        class="input"
+        type="text"
+        placeholder="New version name"
+        bind:value={newVersionName}
+        aria-label="New version name"
+      />
+      <button class="btn btn--primary" onclick={saveAsNewVersion} disabled={!newVersionName.trim()}>Save as New Version</button>
     </div>
   </section>
 
@@ -255,12 +427,15 @@
     </div>
   </section>
 
-  <!-- \u2500\u2500 CSV columns \u2500\u2500 -->
+  <!-- \u2500\u2500 Structured Output JSON Schema Keys \u2500\u2500 -->
   <section class="settings-section">
-    <h3 class="section-heading">CSV Columns</h3>
-    <p class="section-hint">Drag to reorder. These become the CSV header row.</p>
+    <h3 class="section-heading">Structured Output JSON Schema Keys</h3>
+    <p class="section-hint">
+      These keys define the JSON schema returned by the text processing model and map to CSV export columns.
+      Drag to reorder.
+    </p>
     <ul class="columns-list" role="list">
-      {#each columns as col, i (col)}
+      {#each jsonSchemaKeys as k, i (k)}
         <li
           class="column-item"
           class:dragging={draggingIdx === i}
@@ -273,13 +448,13 @@
           role="listitem"
         >
           <span class="drag-handle" aria-hidden="true">\u2837</span>
-          <span class="col-name">{col}</span>
+          <span class="col-name">{k}</span>
           <button
             class="btn-icon btn--remove"
-            onclick={() => removeColumn(i)}
+            onclick={() => removeKey(i)}
             ondragover={(e) => onDragOver(e, i)}
             ondrop={(e) => onDrop(e, i)}
-            aria-label={`Remove ${col}`}
+            aria-label={`Remove ${k}`}
           >\u00d7</button>
         </li>
       {/each}
@@ -288,12 +463,12 @@
       <input
         class="input"
         type="text"
-        placeholder="custom_column"
-        bind:value={newCol}
-        onkeydown={(e) => e.key === 'Enter' && addColumn()}
-        aria-label="New column name"
+        placeholder="custom_key"
+        bind:value={newKey}
+        onkeydown={(e) => e.key === 'Enter' && addKey()}
+        aria-label="New schema key"
       />
-      <button class="btn btn--primary" onclick={addColumn} disabled={!newCol.trim()}>Add</button>
+      <button class="btn btn--primary" onclick={addKey} disabled={!newKey.trim()}>Add</button>
     </div>
   </section>
 
@@ -363,6 +538,19 @@
 
   .input:focus {
     border-color: var(--color-primary);
+  }
+
+  .prompt-textarea {
+    height: auto;
+    min-height: 140px;
+    padding: var(--space-2) var(--space-3);
+    resize: vertical;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    line-height: 1.4;
+    margin-top: var(--space-2);
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .input--readonly {
