@@ -57,9 +57,32 @@ const PROMPT: &str = "Transcribe all text visible on this receipt exactly as it 
 
 const SCHEMA_KEYS_PLACEHOLDER: &str = "{schema_keys}";
 
+/// Validate that a URL is not empty and has a valid scheme (http/https).
+fn validate_url(url: &str, purpose: &str) -> Result<()> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!(
+            "{} endpoint URL is empty. Please configure a valid URL in settings.",
+            purpose
+        ));
+    }
+
+    let lower = trimmed.to_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err(anyhow!(
+            "{} endpoint URL must start with 'http://' or 'https://'. Got: {}",
+            purpose,
+            trimmed
+        ));
+    }
+
+    Ok(())
+}
+
 /// Extract the first JSON object `{...}` from `s`, skipping any markdown fences.
 /// Returns the substring from the first `{` to the last `}`, inclusive.
 /// Returns an empty string if no `{` or `}` is found.
+
 pub fn extract_json(s: &str) -> String {
     let start = match s.find('{') {
         Some(i) => i,
@@ -86,6 +109,10 @@ pub async fn process_receipt(
     active_system_prompt: &str,
     json_schema_keys: &[String],
 ) -> Result<ReceiptRecord> {
+    // Validate URLs before attempting to build requests
+    validate_url(api_url, "OCR")?;
+    validate_url(extraction_url, "Text Processing")?;
+
     let source_path = file
         .path()
         .to_string_lossy()
@@ -287,5 +314,39 @@ mod tests {
     #[test]
     fn extract_json_empty() {
         assert_eq!(extract_json("no json here"), "");
+    }
+
+    #[test]
+    fn validate_url_accepts_http() {
+        assert!(validate_url("http://localhost:11434", "OCR").is_ok());
+    }
+
+    #[test]
+    fn validate_url_accepts_https() {
+        assert!(validate_url("https://api.openai.com", "OCR").is_ok());
+    }
+
+    #[test]
+    fn validate_url_rejects_empty() {
+        let result = validate_url("", "OCR");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("empty"));
+    }
+
+    #[test]
+    fn validate_url_rejects_invalid_scheme() {
+        let result = validate_url("ftp://example.com", "OCR");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("http://"));
+    }
+
+    #[test]
+    fn validate_url_rejects_no_scheme() {
+        let result = validate_url("localhost:11434", "OCR");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("http://"));
     }
 }
