@@ -47,7 +47,10 @@ async fn process_receipt(
     api_url: String,
     ocr_model: String,
     extraction_model: String,
-    csv_columns: Vec<String>,
+    extraction_url: String,
+    extraction_api_key: String,
+    active_system_prompt: String,
+    json_schema_keys: Vec<String>,
     api_key: String,
     done: Option<u32>,
     total: Option<u32>,
@@ -59,7 +62,17 @@ async fn process_receipt(
     };
     emit_log(&app, LogLevel::Info, format!("Processing {}", path));
     let start = std::time::Instant::now();
-    let record = receipt::process_receipt(file, &api_url, &ocr_model, &extraction_model, &csv_columns, &api_key)
+    let record = receipt::process_receipt(
+        file,
+        &api_url,
+        &api_key,
+        &ocr_model,
+        &extraction_url,
+        &extraction_api_key,
+        &extraction_model,
+        &active_system_prompt,
+        &json_schema_keys,
+    )
         .await
         .map_err(|e| {
             emit_log(&app, LogLevel::Error, format!("Failed to process {}: {}", path, e));
@@ -138,6 +151,9 @@ pub fn run() {
             keyring_store::set_api_key,
             keyring_store::get_api_key,
             keyring_store::delete_api_key,
+            keyring_store::set_extraction_api_key,
+            keyring_store::get_extraction_api_key,
+            keyring_store::delete_extraction_api_key,
             ocr_client::ping_endpoint,
             ocr_client::list_models,
             scan_receipts,
