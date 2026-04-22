@@ -56,7 +56,10 @@
     const cmd = file.type === 'pdf' ? 'render_pdf_preview' : 'read_image_base64';
     invoke<string>(cmd, { path: file.path })
       .then(data => { imageData = data; })
-      .catch(() => { imageData = null; })
+      .catch((e) => {
+        imageData = null;
+        showToast('error', `Preview failed: ${String(e)}`);
+      })
       .finally(() => { imageLoading = false; });
   });
 
@@ -133,22 +136,26 @@
     zoom = newZoom;
   }
 
+  function onWindowMouseMove(e: MouseEvent) {
+    if (!isDragging) return;
+    panX = e.clientX - dragStartX;
+    panY = e.clientY - dragStartY;
+  }
+
+  function onWindowMouseUp() {
+    isDragging = false;
+    window.removeEventListener('mousemove', onWindowMouseMove);
+    window.removeEventListener('mouseup', onWindowMouseUp);
+  }
+
   function onMouseDown(e: MouseEvent) {
     if (e.button !== 0) return;
     isDragging = true;
     dragStartX = e.clientX - panX;
     dragStartY = e.clientY - panY;
     e.preventDefault();
-  }
-
-  function onMouseMove(e: MouseEvent) {
-    if (!isDragging) return;
-    panX = e.clientX - dragStartX;
-    panY = e.clientY - dragStartY;
-  }
-
-  function onMouseUp() {
-    isDragging = false;
+    window.addEventListener('mousemove', onWindowMouseMove);
+    window.addEventListener('mouseup', onWindowMouseUp);
   }
 
   function resetView() {
@@ -221,9 +228,6 @@
     bind:this={imagePane}
     onwheel={onWheel}
     onmousedown={onMouseDown}
-    onmousemove={onMouseMove}
-    onmouseup={onMouseUp}
-    onmouseleave={onMouseUp}
     role="img"
     aria-label="Receipt image viewer — scroll to zoom, drag to pan"
   >
@@ -441,13 +445,6 @@
     color: var(--color-text-muted);
     font-size: var(--font-size-sm);
     pointer-events: none;
-  }
-
-  .pdf-icon {
-    font-size: 2.5rem;
-    font-weight: 700;
-    opacity: 0.2;
-    font-family: var(--font-mono);
   }
 
   .muted { color: var(--color-text-muted); }

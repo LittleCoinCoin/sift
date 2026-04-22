@@ -1,0 +1,12 @@
+# pdfium binaries — downloaded at build time by build.rs (platform-specific)
+libpdfium.dylib
+libpdfium.so
+pdfium.dll
+
+# pdfium archive extras — extracted alongside the binary
+include/
+LICENSE
+PDFiumConfig.cmake
+VERSION
+args.gn
+pdfium_download.tgz

@@ -258,6 +258,8 @@
           <button
             class="btn-icon btn--remove"
             onclick={() => removeColumn(i)}
+            ondragover={(e) => onDragOver(e, i)}
+            ondrop={(e) => onDrop(e, i)}
             aria-label={`Remove ${col}`}
           >×</button>
         </li>
@@ -475,12 +477,14 @@
     color: var(--color-text-muted);
     font-size: 1rem;
     flex-shrink: 0;
+    pointer-events: none;
   }
 
   .col-name {
     flex: 1;
     font-size: var(--font-size-md);
     font-family: var(--font-mono);
+    pointer-events: none;
   }
 
   .btn-icon {

@@ -177,9 +177,11 @@ pub fn render_pdf_first_page(path: &std::path::Path) -> Result<Vec<u8>> {
     use pdfium_render::prelude::*;
 
     let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-            .or_else(|_| Pdfium::bind_to_system_library())
-            .map_err(|e| anyhow!("pdfium library not found: {}", e))?,
+        Pdfium::bind_to_library(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(Pdfium::pdfium_platform_library_name()),
+        )
+        .map_err(|e| anyhow!("pdfium library not found: {}", e))?,
     );
 
     let doc = pdfium
