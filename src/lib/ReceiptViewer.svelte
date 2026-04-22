@@ -22,14 +22,14 @@
   let dirInput = $state(receipts.currentDir);
 
   // Settings
-  let settings = $state({ url: '', model: '', csv_columns: [] as string[] });
+  let settings = $state({ url: '', ocr_model: '', extraction_model: '', csv_columns: [] as string[] });
   let apiKey = $state('');
 
   // Load settings once
   $effect(() => {
     (async () => {
       try {
-        const s = await invoke<{ url: string; model: string; receipt_dir: string; csv_columns: string[] }>('get_settings');
+        const s = await invoke<{ url: string; ocr_model: string; extraction_model: string; receipt_dir: string; csv_columns: string[] }>('get_settings');
         settings = s;
         if (s.receipt_dir && !dirInput) dirInput = s.receipt_dir;
       } catch {}
@@ -84,7 +84,9 @@
         path: file.path,
         fileType: file.type,
         apiUrl: settings.url,
-        model: settings.model,
+        ocrModel: settings.ocr_model,
+        extractionModel: settings.extraction_model,
+        csvColumns: settings.csv_columns,
         apiKey: apiKey,
       });
       receipts.setRecord(file.path, record);
@@ -169,13 +171,6 @@
   const isProcessing = $derived(selectedPath ? receipts.isProcessing(selectedPath) : false);
   const record = $derived(receipts.selectedRecord);
 
-  const FIELDS: { key: EditableField; label: string }[] = [
-    { key: 'date',           label: 'Date'           },
-    { key: 'category',       label: 'Category'       },
-    { key: 'entity',         label: 'Entity'         },
-    { key: 'amount',         label: 'Amount'         },
-    { key: 'payment_method', label: 'Payment Method' },
-  ];
 </script>
 
 <div class="viewer">
@@ -274,13 +269,13 @@
 
     <div class="fields-body">
       {#if record}
-        {#each FIELDS as { key, label }}
+        {#each Object.entries(record.fields) as [key, value]}
           <div class="field-group">
-            <label for="field-{key}">{label}</label>
+            <label for="field-{key}">{key.replace(/_/g, ' ')}</label>
             <input
               id="field-{key}"
               type="text"
-              value={record[key]}
+              value={value}
               oninput={(e) => selectedPath && receipts.updateField(selectedPath, key, e.currentTarget.value)}
             />
           </div>

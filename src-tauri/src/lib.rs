@@ -45,7 +45,9 @@ async fn process_receipt(
     path: String,
     file_type: String,
     api_url: String,
-    model: String,
+    ocr_model: String,
+    extraction_model: String,
+    csv_columns: Vec<String>,
     api_key: String,
     done: Option<u32>,
     total: Option<u32>,
@@ -57,7 +59,7 @@ async fn process_receipt(
     };
     emit_log(&app, LogLevel::Info, format!("Processing {}", path));
     let start = std::time::Instant::now();
-    let record = receipt::process_receipt(file, &api_url, &model, &api_key)
+    let record = receipt::process_receipt(file, &api_url, &ocr_model, &extraction_model, &csv_columns, &api_key)
         .await
         .map_err(|e| {
             emit_log(&app, LogLevel::Error, format!("Failed to process {}: {}", path, e));

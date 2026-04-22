@@ -8,6 +8,7 @@
   // Persisted settings
   let url = $state('');
   let model = $state('');
+  let extractionModel = $state('');
   let receiptDir = $state('');
   let columns: string[] = $state([...DEFAULT_COLUMNS]);
 
@@ -36,9 +37,10 @@
 
   onMount(async () => {
     try {
-      const s = await invoke<{ url: string; model: string; receipt_dir: string; csv_columns: string[] }>('get_settings');
+      const s = await invoke<{ url: string; ocr_model: string; extraction_model: string; receipt_dir: string; csv_columns: string[] }>('get_settings');
       url = s.url ?? '';
-      model = s.model ?? '';
+      model = s.ocr_model ?? '';
+      extractionModel = s.extraction_model ?? '';
       receiptDir = s.receipt_dir ?? '';
       columns = s.csv_columns?.length ? s.csv_columns : [...DEFAULT_COLUMNS];
     } catch {
@@ -73,6 +75,7 @@
       const list = await invoke<{ id: string }[]>('list_models', { url, key });
       models = list.map((m) => m.id);
       if (!model && models.length) model = models[0];
+      if (!extractionModel && models.length) extractionModel = models[0];
     } catch (e: unknown) {
       modelsError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -100,7 +103,7 @@
 
   async function saveSettings() {
     await invoke('save_settings', {
-      settings: { url, model, receipt_dir: receiptDir, csv_columns: columns },
+      settings: { url, ocr_model: model, extraction_model: extractionModel, receipt_dir: receiptDir, csv_columns: columns },
     });
     saveMsg = 'Saved';
     setTimeout(() => (saveMsg = ''), 2000);
@@ -151,7 +154,7 @@
 <div class="settings-panel">
   <h2 class="settings-title">Settings</h2>
 
-  <!-- ── Endpoint ── -->
+  <!-- \u2500\u2500 Endpoint \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">API Endpoint</h3>
     <div class="field-row">
@@ -170,12 +173,12 @@
         onclick={ping}
         disabled={!url || pingStatus === 'loading'}
       >
-        {#if pingStatus === 'loading'}Pinging…{:else if pingStatus === 'ok'}✓ Online{:else if pingStatus === 'fail'}✗ Offline{:else}Ping{/if}
+        {#if pingStatus === 'loading'}Pinging\u2026{:else if pingStatus === 'ok'}\u2713 Online{:else if pingStatus === 'fail'}\u2717 Offline{:else}Ping{/if}
       </button>
     </div>
   </section>
 
-  <!-- ── API Key ── -->
+  <!-- \u2500\u2500 API Key \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">API Key</h3>
     {#if keyStored}
@@ -188,7 +191,7 @@
         <input
           class="input"
           type="password"
-          placeholder="sk-…"
+          placeholder="sk-\u2026"
           bind:value={keyInput}
           aria-label="API key"
           autocomplete="new-password"
@@ -198,11 +201,11 @@
     {/if}
   </section>
 
-  <!-- ── Model ── -->
+  <!-- \u2500\u2500 OCR Model \u2500\u2500 -->
   <section class="settings-section">
-    <h3 class="section-heading">Model</h3>
+    <h3 class="section-heading">OCR Model</h3>
     <div class="field-row">
-      <select class="input" bind:value={model} aria-label="Model" disabled={modelsLoading}>
+      <select class="input" bind:value={model} aria-label="OCR model" disabled={modelsLoading}>
         {#if models.length === 0}
           <option value={model}>{model || 'No models loaded'}</option>
         {:else}
@@ -212,7 +215,7 @@
         {/if}
       </select>
       <button class="btn" onclick={loadModels} disabled={!url || modelsLoading}>
-        {modelsLoading ? 'Loading…' : 'Load models'}
+        {modelsLoading ? 'Loading\u2026' : 'Load models'}
       </button>
     </div>
     {#if modelsError}
@@ -220,7 +223,23 @@
     {/if}
   </section>
 
-  <!-- ── Receipt directory ── -->
+  <!-- \u2500\u2500 Extraction Model \u2500\u2500 -->
+  <section class="settings-section">
+    <h3 class="section-heading">Extraction Model</h3>
+    <div class="field-row">
+      <select class="input" bind:value={extractionModel} aria-label="Extraction model" disabled={modelsLoading}>
+        {#if models.length === 0}
+          <option value={extractionModel}>{extractionModel || 'No models loaded'}</option>
+        {:else}
+          {#each models as m}
+            <option value={m}>{m}</option>
+          {/each}
+        {/if}
+      </select>
+    </div>
+  </section>
+
+  <!-- \u2500\u2500 Receipt directory \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">Receipt Directory</h3>
     <div class="field-row">
@@ -232,11 +251,11 @@
         placeholder="(not set)"
         aria-label="Receipt directory"
       />
-      <button class="btn" onclick={pickDirectory}>Browse…</button>
+      <button class="btn" onclick={pickDirectory}>Browse\u2026</button>
     </div>
   </section>
 
-  <!-- ── CSV columns ── -->
+  <!-- \u2500\u2500 CSV columns \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">CSV Columns</h3>
     <p class="section-hint">Drag to reorder. These become the CSV header row.</p>
@@ -253,7 +272,7 @@
           ondragend={onDragEnd}
           role="listitem"
         >
-          <span class="drag-handle" aria-hidden="true">⠿</span>
+          <span class="drag-handle" aria-hidden="true">\u2837</span>
           <span class="col-name">{col}</span>
           <button
             class="btn-icon btn--remove"
@@ -261,7 +280,7 @@
             ondragover={(e) => onDragOver(e, i)}
             ondrop={(e) => onDrop(e, i)}
             aria-label={`Remove ${col}`}
-          >×</button>
+          >\u00d7</button>
         </li>
       {/each}
     </ul>
@@ -278,7 +297,7 @@
     </div>
   </section>
 
-  <!-- ── Save ── -->
+  <!-- \u2500\u2500 Save \u2500\u2500 -->
   <div class="settings-footer">
     <button class="btn btn--primary btn--wide" onclick={saveSettings}>Save settings</button>
     {#if saveMsg}

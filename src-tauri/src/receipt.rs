@@ -3,16 +3,13 @@ use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose, Engine as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReceiptRecord {
-    pub date: String,
-    pub category: String,
-    pub entity: String,
-    pub amount: String,
-    pub payment_method: String,
     pub source_path: String,
+    pub fields: HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -55,29 +52,33 @@ struct AssistantMessage {
     content: String,
 }
 
-#[derive(Deserialize)]
-struct ExtractedFields {
-    #[serde(default)]
-    date: String,
-    #[serde(default)]
-    category: String,
-    #[serde(default)]
-    entity: String,
-    #[serde(default)]
-    amount: String,
-    #[serde(default)]
-    payment_method: String,
-}
+const PROMPT: &str = "Transcribe all text visible on this receipt exactly as it appears. \
+    Output only the raw text content — no commentary, no formatting, no JSON.";
 
-const PROMPT: &str = "Extract receipt information and return ONLY a JSON object with these exact keys: \
-    date (ISO 8601 date), category (e.g. Food, Travel, Office), entity (merchant name), \
-    amount (numeric string with currency symbol), payment_method (e.g. Cash, Visa, MasterCard). \
-    Return nothing else — just the JSON object.";
+/// Extract the first JSON object `{...}` from `s`, skipping any markdown fences.
+/// Returns the substring from the first `{` to the last `}`, inclusive.
+/// Returns an empty string if no `{` or `}` is found.
+pub fn extract_json(s: &str) -> String {
+    let start = match s.find('{') {
+        Some(i) => i,
+        None => return String::new(),
+    };
+    let end = match s.rfind('}') {
+        Some(i) => i,
+        None => return String::new(),
+    };
+    if end < start {
+        return String::new();
+    }
+    s[start..=end].to_string()
+}
 
 pub async fn process_receipt(
     file: ReceiptFile,
     api_url: &str,
-    model: &str,
+    ocr_model: &str,
+    extraction_model: &str,
+    csv_columns: &[String],
     api_key: &str,
 ) -> Result<ReceiptRecord> {
     let source_path = file
@@ -103,8 +104,8 @@ pub async fn process_receipt(
         general_purpose::STANDARD.encode(&png_bytes)
     );
 
-    let request = ChatRequest {
-        model,
+    let ocr_request = ChatRequest {
+        model: ocr_model,
         messages: vec![Message {
             role: "user".into(),
             content: vec![
@@ -119,39 +120,99 @@ pub async fn process_receipt(
     };
 
     let url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
-    let response = Client::new()
+    let client = Client::new();
+
+    let ocr_response = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
-        .json(&request)
+        .json(&ocr_request)
         .send()
         .await?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(anyhow!("API error {}: {}", status, body));
+    if !ocr_response.status().is_success() {
+        let status = ocr_response.status();
+        let body = ocr_response.text().await.unwrap_or_default();
+        return Err(anyhow!("OCR API error {}: {}", status, body));
     }
 
-    let chat: ChatResponse = response.json().await?;
-    let content = chat
+    let ocr_chat: ChatResponse = ocr_response.json().await?;
+    let markdown = ocr_chat
         .choices
         .into_iter()
         .next()
-        .ok_or_else(|| anyhow!("empty choices in API response"))?
+        .ok_or_else(|| anyhow!("empty choices in OCR API response"))?
         .message
         .content;
 
-    let fields: ExtractedFields = serde_json::from_str(&content)
-        .map_err(|e| anyhow!("failed to parse model response as JSON: {}\n{}", e, content))?;
+    let column_list: Vec<String> = csv_columns
+        .iter()
+        .map(|c| format!("\"{c}\": \"...\""))
+        .collect();
+    let columns_preview = column_list.join(", ");
 
-    Ok(ReceiptRecord {
-        date: fields.date,
-        category: fields.category,
-        entity: fields.entity,
-        amount: fields.amount,
-        payment_method: fields.payment_method,
-        source_path,
-    })
+    let system_prompt = format!(
+        "You are a data extraction assistant. Given a receipt transcription, extract ONLY these fields and return a single JSON object with no other text:\n  {{ {} }}\nFor any field you cannot find, use an empty string.",
+        columns_preview
+    );
+
+    let extraction_request = ChatRequest {
+        model: extraction_model,
+        messages: vec![
+            Message {
+                role: "system".into(),
+                content: vec![ContentPart::Text {
+                    text: system_prompt,
+                }],
+            },
+            Message {
+                role: "user".into(),
+                content: vec![ContentPart::Text {
+                    text: markdown,
+                }],
+            },
+        ],
+    };
+
+    let extraction_response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&extraction_request)
+        .send()
+        .await?;
+
+    if !extraction_response.status().is_success() {
+        let status = extraction_response.status();
+        let body = extraction_response.text().await.unwrap_or_default();
+        return Err(anyhow!("Extraction API error {}: {}", status, body));
+    }
+
+    let extraction_chat: ChatResponse = extraction_response.json().await?;
+    let raw_content = extraction_chat
+        .choices
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("empty choices in extraction API response"))?
+        .message
+        .content;
+
+    let json_str = extract_json(&raw_content);
+    let parsed_map: HashMap<String, String> = match serde_json::from_str(&json_str) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to parse extraction response as JSON ({}). Raw: {}",
+                e, raw_content
+            );
+            HashMap::new()
+        }
+    };
+
+    let mut fields = HashMap::new();
+    for col in csv_columns {
+        fields.insert(col.clone(), parsed_map.get(col).cloned().unwrap_or_default());
+    }
+
+    Ok(ReceiptRecord { source_path, fields })
 }
 
 fn image_mime(ext: &str) -> &'static str {
@@ -198,4 +259,27 @@ pub fn render_pdf_first_page(path: &std::path::Path) -> Result<Vec<u8>> {
         image::ImageFormat::Png,
     )?;
     Ok(png_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_json_plain() {
+        assert_eq!(extract_json(r#"{"a":"b"}"#), r#"{"a":"b"}"#);
+    }
+
+    #[test]
+    fn extract_json_fenced() {
+        assert_eq!(
+            extract_json("```json\n{\"a\":\"b\"}\n```"),
+            "{\"a\":\"b\"}"
+        );
+    }
+
+    #[test]
+    fn extract_json_empty() {
+        assert_eq!(extract_json("no json here"), "");
+    }
 }

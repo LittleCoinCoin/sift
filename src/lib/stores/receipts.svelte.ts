@@ -4,15 +4,11 @@ export interface ReceiptFile {
 }
 
 export interface ReceiptRecord {
-  date: string;
-  category: string;
-  entity: string;
-  amount: string;
-  payment_method: string;
   source_path: string;
+  fields: Record<string, string>;
 }
 
-export type EditableField = keyof Omit<ReceiptRecord, 'source_path'>;
+export type EditableField = string;
 
 class ReceiptStore {
   files = $state<ReceiptFile[]>([]);
@@ -54,7 +50,7 @@ class ReceiptStore {
     const existing = this.records.get(path);
     if (!existing) return;
     const next = new Map(this.records);
-    next.set(path, { ...existing, [field]: value });
+    next.set(path, { ...existing, fields: { ...existing.fields, [field]: value } });
     this.records = next;
   }
 
