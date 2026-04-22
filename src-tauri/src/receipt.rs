@@ -19,8 +19,6 @@ pub struct ReceiptRecord {
 struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<Message>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
 }
 
 #[derive(Serialize)]
@@ -41,11 +39,6 @@ struct ImageUrl {
     url: String,
 }
 
-#[derive(Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    kind: String,
-}
 
 #[derive(Deserialize)]
 struct ChatResponse {
@@ -123,9 +116,6 @@ pub async fn process_receipt(
                 },
             ],
         }],
-        response_format: Some(ResponseFormat {
-            kind: "json_object".into(),
-        }),
     };
 
     let url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
