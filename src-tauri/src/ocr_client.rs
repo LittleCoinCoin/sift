@@ -11,8 +11,27 @@ struct ModelsResponse {
     data: Vec<ModelInfo>,
 }
 
+/// Validate that a URL is not empty and has a valid scheme (http/https).
+fn validate_url(url: &str) -> Result<(), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("API endpoint URL is empty. Please configure a valid URL in settings.".to_string());
+    }
+
+    let lower = trimmed.to_lowercase();
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err(format!(
+            "API endpoint URL must start with 'http://' or 'https://'. Got: {}",
+            trimmed
+        ));
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn ping_endpoint(url: String) -> Result<bool, String> {
+    validate_url(&url)?;
     let client = Client::new();
     let target = format!("{}/models", url.trim_end_matches('/'));
     client
@@ -25,6 +44,7 @@ pub async fn ping_endpoint(url: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn list_models(url: String, key: String) -> Result<Vec<ModelInfo>, String> {
+    validate_url(&url)?;
     let client = Client::new();
     let target = format!("{}/models", url.trim_end_matches('/'));
     let response = client
@@ -59,5 +79,36 @@ mod tests {
         let url = "http://localhost:11434/";
         let target = format!("{}/models", url.trim_end_matches('/'));
         assert_eq!(target, "http://localhost:11434/models");
+    }
+
+    #[test]
+    fn validate_url_accepts_http() {
+        assert!(validate_url("http://localhost:11434").is_ok());
+    }
+
+    #[test]
+    fn validate_url_accepts_https() {
+        assert!(validate_url("https://api.openai.com").is_ok());
+    }
+
+    #[test]
+    fn validate_url_rejects_empty() {
+        let result = validate_url("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn validate_url_rejects_invalid_scheme() {
+        let result = validate_url("ftp://example.com");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("http://"));
+    }
+
+    #[test]
+    fn validate_url_rejects_no_scheme() {
+        let result = validate_url("localhost:11434");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("http://"));
     }
 }
