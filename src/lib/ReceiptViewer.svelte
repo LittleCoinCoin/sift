@@ -22,19 +22,48 @@
   let dirInput = $state(receipts.currentDir);
 
   // Settings
-  let settings = $state({ url: '', ocr_model: '', extraction_model: '', csv_columns: [] as string[] });
+  interface SystemPrompt {
+    id: string;
+    name: string;
+    content: string;
+  }
+  interface AppSettings {
+    url: string;
+    ocr_model: string;
+    extraction_url: string;
+    extraction_model: string;
+    receipt_dir: string;
+    json_schema_keys: string[];
+    system_prompts: SystemPrompt[];
+    active_system_prompt_id: string;
+  }
+
+  let settings = $state<AppSettings>({
+    url: '',
+    ocr_model: '',
+    extraction_url: '',
+    extraction_model: '',
+    receipt_dir: '',
+    json_schema_keys: [],
+    system_prompts: [],
+    active_system_prompt_id: '',
+  });
   let apiKey = $state('');
+  let extractionApiKey = $state('');
 
   // Load settings once
   $effect(() => {
     (async () => {
       try {
-        const s = await invoke<{ url: string; ocr_model: string; extraction_model: string; receipt_dir: string; csv_columns: string[] }>('get_settings');
+        const s = await invoke<AppSettings>('get_settings');
         settings = s;
         if (s.receipt_dir && !dirInput) dirInput = s.receipt_dir;
       } catch {}
       try {
         apiKey = await invoke<string>('get_api_key');
+      } catch {}
+      try {
+        extractionApiKey = await invoke<string>('get_extraction_api_key');
       } catch {}
     })();
   });
@@ -80,13 +109,19 @@
     if (!file) return;
     receipts.setProcessing(file.path, true);
     try {
+      const activePrompt = settings.system_prompts.find(
+        (p) => p.id === settings.active_system_prompt_id,
+      );
       const record = await invoke<ReceiptRecord>('process_receipt', {
         path: file.path,
         fileType: file.type,
         apiUrl: settings.url,
         ocrModel: settings.ocr_model,
+        extractionUrl: settings.extraction_url,
         extractionModel: settings.extraction_model,
-        csvColumns: settings.csv_columns,
+        extractionApiKey: extractionApiKey,
+        activeSystemPrompt: activePrompt?.content ?? '',
+        jsonSchemaKeys: settings.json_schema_keys,
         apiKey: apiKey,
       });
       receipts.setRecord(file.path, record);
@@ -112,10 +147,10 @@
     if (!outputPath) return;
     exporting = true;
     try {
-      const columns = settings.csv_columns?.length
-        ? settings.csv_columns
+      const keys = settings.json_schema_keys?.length
+        ? settings.json_schema_keys
         : ['date', 'category', 'entity', 'amount', 'payment_method', 'source_path'];
-      await invoke('export_csv', { records, columns, outputPath });
+      await invoke('export_csv', { records, keys, outputPath });
       showToast('success', `Exported ${records.length} receipt(s) to CSV.`);
     } catch (e: unknown) {
       showToast('error', `Export failed: ${e instanceof Error ? e.message : String(e)}`);

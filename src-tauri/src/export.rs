@@ -2,21 +2,21 @@ use crate::receipt::ReceiptRecord;
 use anyhow::Result;
 use std::path::Path;
 
-pub fn default_columns() -> Vec<String> {
+pub fn default_keys() -> Vec<String> {
     Vec::new()
 }
 
 pub fn export_csv(
     records: Vec<ReceiptRecord>,
-    columns: Vec<String>,
+    keys: Vec<String>,
     output_path: &Path,
 ) -> Result<()> {
     let mut wtr = csv::Writer::from_path(output_path)?;
-    wtr.write_record(&columns)?;
+    wtr.write_record(&keys)?;
     for record in &records {
-        let row: Vec<String> = columns
+        let row: Vec<String> = keys
             .iter()
-            .map(|col| record.fields.get(col).cloned().unwrap_or_default())
+            .map(|key| record.fields.get(key).cloned().unwrap_or_default())
             .collect();
         wtr.write_record(&row)?;
     }
@@ -39,15 +39,15 @@ mod tests {
     }
 
     #[test]
-    fn exports_columns() {
+    fn exports_schema_keys() {
         let dir = tempdir().unwrap();
         let out = dir.path().join("out.csv");
         let records = vec![
             make_record("/tmp/r1.jpg", &[("date", "2024-01-15"), ("amount", "$5.50")]),
             make_record("/tmp/r2.jpg", &[("date", "2024-01-16"), ("amount", "$12.00")]),
         ];
-        let cols = vec!["date".to_string(), "amount".to_string()];
-        export_csv(records, cols, &out).unwrap();
+        let keys = vec!["date".to_string(), "amount".to_string()];
+        export_csv(records, keys, &out).unwrap();
 
         let content = std::fs::read_to_string(&out).unwrap();
         let mut rdr = csv::Reader::from_reader(content.as_bytes());
@@ -65,12 +65,12 @@ mod tests {
     }
 
     #[test]
-    fn unknown_column_yields_empty_string() {
+    fn unknown_key_yields_empty_string() {
         let dir = tempdir().unwrap();
         let out = dir.path().join("out.csv");
         let records = vec![make_record("/tmp/r1.jpg", &[("date", "2024-01-15")])];
-        let cols = vec!["date".to_string(), "notes".to_string()];
-        export_csv(records, cols, &out).unwrap();
+        let keys = vec!["date".to_string(), "notes".to_string()];
+        export_csv(records, keys, &out).unwrap();
 
         let content = std::fs::read_to_string(&out).unwrap();
         let mut rdr = csv::Reader::from_reader(content.as_bytes());

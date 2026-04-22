@@ -90,16 +90,16 @@ async fn process_receipt(
 fn export_csv(
     app: tauri::AppHandle,
     records: Vec<ReceiptRecord>,
-    columns: Vec<String>,
+    keys: Vec<String>,
     output_path: String,
 ) -> Result<(), String> {
     emit_log(&app, LogLevel::Info, format!("Exporting {} record(s) to {}", records.len(), output_path));
-    let cols = if columns.is_empty() {
-        export::default_columns()
+    let resolved_keys = if keys.is_empty() {
+        export::default_keys()
     } else {
-        columns
+        keys
     };
-    export::export_csv(records, cols, std::path::Path::new(&output_path))
+    export::export_csv(records, resolved_keys, std::path::Path::new(&output_path))
         .map_err(|e| {
             emit_log(&app, LogLevel::Error, format!("Export failed: {}", e));
             e.to_string()
