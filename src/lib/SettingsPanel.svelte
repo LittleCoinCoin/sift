@@ -51,6 +51,33 @@
   // New system prompt version name
   let newVersionName = $state('');
 
+  // Tabbed navigation
+  type TabId = 'ocr' | 'text' | 'prompt' | 'output';
+  const tabs: { id: TabId; label: string }[] = [
+    { id: 'ocr', label: 'OCR' },
+    { id: 'text', label: 'Text Processing' },
+    { id: 'prompt', label: 'Prompt' },
+    { id: 'output', label: 'Output' },
+  ];
+  let activeTab: TabId = $state('ocr');
+
+  function onTabKey(e: KeyboardEvent, i: number) {
+    const last = tabs.length - 1;
+    let next = i;
+    if (e.key === 'ArrowRight') next = i === last ? 0 : i + 1;
+    else if (e.key === 'ArrowLeft') next = i === 0 ? last : i - 1;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = last;
+    else return;
+    e.preventDefault();
+    activeTab = tabs[next].id;
+    // Move focus to the newly active tab (WAI-ARIA roving tabindex pattern)
+    queueMicrotask(() => {
+      const btn = document.getElementById(`settings-tab-${tabs[next].id}`);
+      btn?.focus();
+    });
+  }
+
   // Keep promptContent in sync with the currently selected prompt.
   $effect(() => {
     const p = systemPrompts.find((sp) => sp.id === activePromptId);
@@ -247,8 +274,34 @@
 </script>
 
 <div class="settings-panel">
-  <h2 class="settings-title">Settings</h2>
+  <header class="settings-header">
+    <h2 class="settings-title">Settings</h2>
+    <div class="tablist" role="tablist" aria-label="Settings sections">
+      {#each tabs as t, i (t.id)}
+        <button
+          id={`settings-tab-${t.id}`}
+          class="tab"
+          class:tab--active={activeTab === t.id}
+          role="tab"
+          type="button"
+          aria-selected={activeTab === t.id}
+          aria-controls={`settings-tabpanel-${t.id}`}
+          tabindex={activeTab === t.id ? 0 : -1}
+          onclick={() => (activeTab = t.id)}
+          onkeydown={(e) => onTabKey(e, i)}
+        >{t.label}</button>
+      {/each}
+    </div>
+  </header>
 
+  <div
+    class="settings-body"
+    id={`settings-tabpanel-${activeTab}`}
+    role="tabpanel"
+    aria-labelledby={`settings-tab-${activeTab}`}
+    tabindex="0"
+  >
+  {#if activeTab === 'ocr'}
   <!-- \u2500\u2500 Endpoint \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">API Endpoint</h3>
@@ -317,7 +370,7 @@
       <p class="field-error">{modelsError}</p>
     {/if}
   </section>
-
+  {:else if activeTab === 'text'}
   <!-- \u2500\u2500 Text Processing Endpoint \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">Text Processing Endpoint</h3>
@@ -376,7 +429,7 @@
       <p class="field-error">{extractionModelsError}</p>
     {/if}
   </section>
-
+  {:else if activeTab === 'prompt'}
   <!-- \u2500\u2500 System Prompt \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">System Prompt</h3>
@@ -410,7 +463,7 @@
       <button class="btn btn--primary" onclick={saveAsNewVersion} disabled={!newVersionName.trim()}>Save as New Version</button>
     </div>
   </section>
-
+  {:else if activeTab === 'output'}
   <!-- \u2500\u2500 Receipt directory \u2500\u2500 -->
   <section class="settings-section">
     <h3 class="section-heading">Receipt Directory</h3>
@@ -471,32 +524,108 @@
       <button class="btn btn--primary" onclick={addKey} disabled={!newKey.trim()}>Add</button>
     </div>
   </section>
-
-  <!-- \u2500\u2500 Save \u2500\u2500 -->
-  <div class="settings-footer">
-    <button class="btn btn--primary btn--wide" onclick={saveSettings}>Save settings</button>
-    {#if saveMsg}
-      <span class="save-msg">{saveMsg}</span>
-    {/if}
+  {/if}
   </div>
+
+  <!-- \u2500\u2500 Sticky Save footer \u2500\u2500 -->
+  <footer class="settings-footer">
+    <button class="btn btn--primary btn--wide" onclick={saveSettings}>Save settings</button>
+    <span class="save-msg" role="status" aria-live="polite">{saveMsg}</span>
+  </footer>
 </div>
 
 <style>
+  /* Three-zone flex column that fits the viewport below the 48px app header. */
   .settings-panel {
-    padding: var(--space-6);
-    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 48px);
+    max-width: 640px;
+    margin: 0 auto;
     font-family: var(--font-body);
     color: var(--color-text);
+  }
+
+  .settings-header {
+    flex-shrink: 0;
+    padding: var(--space-6) var(--space-6) 0;
+    background: var(--color-bg);
   }
 
   .settings-title {
     font-size: var(--font-size-xl);
     font-weight: 600;
-    margin-bottom: var(--space-6);
+    margin-bottom: var(--space-4);
+  }
+
+  .tablist {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .tab {
+    position: relative;
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: -1px;
+    font-family: var(--font-body);
+    font-size: var(--font-size-md);
+    font-weight: 500;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    border-top-left-radius: var(--radius-sm);
+    border-top-right-radius: var(--radius-sm);
+    transition: color var(--duration-fast), border-color var(--duration-fast),
+      background var(--duration-fast);
+  }
+
+  .tab:hover {
+    color: var(--color-text);
+    background: var(--color-surface-raised);
+  }
+
+  /* Active tab uses readable --color-text (AA) + bold weight + primary underline.
+     Selection is also conveyed by aria-selected, so it never depends on color alone. */
+  .tab--active {
+    color: var(--color-text);
+    font-weight: 600;
+    border-bottom-color: var(--color-primary);
+  }
+
+  .tab--active:hover {
+    color: var(--color-text);
+    background: transparent;
+  }
+
+  .tab:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+  }
+
+  /* Scrollable middle zone: keyboard-focusable so arrow-key scroll works. */
+  .settings-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-6);
+  }
+
+  .settings-body:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -4px;
+    border-radius: var(--radius-sm);
   }
 
   .settings-section {
     margin-bottom: var(--space-6);
+  }
+
+  .settings-section:last-child {
+    margin-bottom: 0;
   }
 
   .section-heading {
@@ -540,6 +669,11 @@
     border-color: var(--color-primary);
   }
 
+  .input:focus-visible {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  }
+
   .prompt-textarea {
     height: auto;
     min-height: 140px;
@@ -579,6 +713,11 @@
 
   .btn:hover:not(:disabled) {
     background: var(--color-surface-raised);
+  }
+
+  .btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .btn:disabled {
@@ -709,16 +848,36 @@
     color: var(--color-error);
   }
 
+  .btn-icon:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Sticky save footer, always visible regardless of body scroll position. */
   .settings-footer {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    padding-top: var(--space-4);
+    padding: var(--space-4) var(--space-6);
+    background: var(--color-surface);
     border-top: 1px solid var(--color-border);
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.04);
   }
 
   .save-msg {
+    min-height: 1rem;
     font-size: var(--font-size-sm);
     color: var(--color-success);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tab,
+    .btn,
+    .input,
+    .column-item {
+      transition: none;
+    }
   }
 </style>
