@@ -55,6 +55,8 @@ struct AssistantMessage {
 const PROMPT: &str = "Transcribe all text visible on this receipt exactly as it appears. \
     Output only the raw text content — no commentary, no formatting, no JSON.";
 
+const SCHEMA_KEYS_PLACEHOLDER: &str = "{schema_keys}";
+
 /// Extract the first JSON object `{...}` from `s`, skipping any markdown fences.
 /// Returns the substring from the first `{` to the last `}`, inclusive.
 /// Returns an empty string if no `{` or `}` is found.
@@ -76,10 +78,13 @@ pub fn extract_json(s: &str) -> String {
 pub async fn process_receipt(
     file: ReceiptFile,
     api_url: &str,
-    ocr_model: &str,
-    extraction_model: &str,
-    csv_columns: &[String],
     api_key: &str,
+    ocr_model: &str,
+    extraction_url: &str,
+    extraction_api_key: &str,
+    extraction_model: &str,
+    active_system_prompt: &str,
+    json_schema_keys: &[String],
 ) -> Result<ReceiptRecord> {
     let source_path = file
         .path()
@@ -119,11 +124,15 @@ pub async fn process_receipt(
         }],
     };
 
-    let url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
+    let ocr_chat_url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
+    let extraction_chat_url = format!(
+        "{}/chat/completions",
+        extraction_url.trim_end_matches('/')
+    );
     let client = Client::new();
 
     let ocr_response = client
-        .post(&url)
+        .post(&ocr_chat_url)
         .header("Authorization", format!("Bearer {}", api_key))
         .json(&ocr_request)
         .send()
@@ -144,16 +153,13 @@ pub async fn process_receipt(
         .message
         .content;
 
-    let column_list: Vec<String> = csv_columns
+    let key_list: Vec<String> = json_schema_keys
         .iter()
         .map(|c| format!("\"{c}\": \"...\""))
         .collect();
-    let columns_preview = column_list.join(", ");
+    let schema_keys_preview = key_list.join(", ");
 
-    let system_prompt = format!(
-        "You are a data extraction assistant. Given a receipt transcription, extract ONLY these fields and return a single JSON object with no other text:\n  {{ {} }}\nFor any field you cannot find, use an empty string.",
-        columns_preview
-    );
+    let system_prompt = active_system_prompt.replace(SCHEMA_KEYS_PLACEHOLDER, &schema_keys_preview);
 
     let extraction_request = ChatRequest {
         model: extraction_model,
@@ -174,8 +180,8 @@ pub async fn process_receipt(
     };
 
     let extraction_response = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
+        .post(&extraction_chat_url)
+        .header("Authorization", format!("Bearer {}", extraction_api_key))
         .json(&extraction_request)
         .send()
         .await?;
@@ -208,8 +214,8 @@ pub async fn process_receipt(
     };
 
     let mut fields = HashMap::new();
-    for col in csv_columns {
-        fields.insert(col.clone(), parsed_map.get(col).cloned().unwrap_or_default());
+    for key in json_schema_keys {
+        fields.insert(key.clone(), parsed_map.get(key).cloned().unwrap_or_default());
     }
 
     Ok(ReceiptRecord { source_path, fields })
