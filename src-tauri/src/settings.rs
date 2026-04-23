@@ -24,8 +24,10 @@ pub struct Settings {
     pub extraction_url: String,
     #[serde(default)]
     pub extraction_model: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub receipt_dir: String,
+    #[serde(default)]
+    pub receipt_dirs: Vec<String>,
     #[serde(default, alias = "csv_columns")]
     pub json_schema_keys: Vec<String>,
     #[serde(default = "default_system_prompts")]
@@ -54,6 +56,7 @@ impl Default for Settings {
             extraction_url: String::new(),
             extraction_model: String::new(),
             receipt_dir: String::new(),
+            receipt_dirs: Vec::new(),
             json_schema_keys: Vec::new(),
             system_prompts: default_system_prompts(),
             active_system_prompt_id: default_active_system_prompt_id(),
@@ -75,7 +78,11 @@ pub fn get_settings(app: AppHandle) -> Result<Settings, String> {
         return Ok(Settings::default());
     }
     let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&data).map_err(|e| e.to_string())
+    let mut settings: Settings = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    if settings.receipt_dirs.is_empty() && !settings.receipt_dir.is_empty() {
+        settings.receipt_dirs.push(std::mem::take(&mut settings.receipt_dir));
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -134,6 +141,21 @@ mod tests {
         assert_eq!(s.ocr_model, "lightonocr");
         assert!(s.extraction_model.is_empty());
         assert!(s.json_schema_keys.is_empty());
+    }
+
+    #[test]
+    fn settings_receipt_dir_migrates_to_receipt_dirs() {
+        let json = r#"{"url":"http://localhost","receipt_dir":"/tmp/receipts"}"#;
+        let mut s: Settings = serde_json::from_str(json).unwrap();
+        // simulate get_settings migration branch
+        if s.receipt_dirs.is_empty() && !s.receipt_dir.is_empty() {
+            s.receipt_dirs.push(std::mem::take(&mut s.receipt_dir));
+        }
+        assert_eq!(s.receipt_dirs, vec!["/tmp/receipts"]);
+        // skip_serializing_if omits the legacy field on save
+        let out = serde_json::to_string(&s).unwrap();
+        assert!(out.contains("receipt_dirs"));
+        assert!(!out.contains(r#""receipt_dir""#));
     }
 
     #[test]
