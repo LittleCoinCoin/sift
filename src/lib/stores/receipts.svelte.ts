@@ -1,57 +1,30 @@
-export interface ReceiptFile {
-  type: 'image' | 'pdf';
-  path: string;
-}
-
-export interface ReceiptRecord {
+export interface ReceiptEntry {
   source_path: string;
-  fields: Record<string, string>;
+  status: 'Unprocessed' | 'Processing' | 'Processed';
+  fields: Record<string, string> | null;
+  source_mtime: number;
 }
 
 export type EditableField = string;
 
 class ReceiptStore {
-  files = $state<ReceiptFile[]>([]);
-  records = $state<Map<string, ReceiptRecord>>(new Map());
+  files = $state<ReceiptEntry[]>([]);
   selectedPath = $state<string | null>(null);
   processing = $state<Set<string>>(new Set());
-  currentDir = $state<string>('');
 
-  get selectedFile(): ReceiptFile | null {
-    return this.files.find(f => f.path === this.selectedPath) ?? null;
-  }
-
-  get selectedRecord(): ReceiptRecord | null {
-    return this.selectedPath ? (this.records.get(this.selectedPath) ?? null) : null;
-  }
-
-  setDir(dir: string) {
-    this.currentDir = dir;
+  get selectedFile(): ReceiptEntry | null {
+    return this.files.find(f => f.source_path === this.selectedPath) ?? null;
   }
 
   selectFile(path: string) {
     this.selectedPath = path;
   }
 
-  setFiles(newFiles: ReceiptFile[]) {
+  setFiles(newFiles: ReceiptEntry[]) {
     this.files = newFiles;
     if (newFiles.length > 0 && !this.selectedPath) {
-      this.selectedPath = newFiles[0].path;
+      this.selectedPath = newFiles[0].source_path;
     }
-  }
-
-  setRecord(path: string, record: ReceiptRecord) {
-    const next = new Map(this.records);
-    next.set(path, record);
-    this.records = next;
-  }
-
-  updateField(path: string, field: EditableField, value: string) {
-    const existing = this.records.get(path);
-    if (!existing) return;
-    const next = new Map(this.records);
-    next.set(path, { ...existing, fields: { ...existing.fields, [field]: value } });
-    this.records = next;
   }
 
   setProcessing(path: string, active: boolean) {
