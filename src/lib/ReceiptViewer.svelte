@@ -1,8 +1,9 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
+  import { onMount } from 'svelte';
   import { receipts } from './stores/receipts.svelte';
-  import type { ReceiptFile, ReceiptRecord, EditableField } from './stores/receipts.svelte';
+  import type { ReceiptEntry } from './stores/receipts.svelte';
   import { showToast } from './stores/log';
 
   // Image display state
@@ -18,9 +19,6 @@
   let dragStartY = $state(0);
   let imagePane: HTMLDivElement;
 
-  // Directory input
-  let dirInput = $state(receipts.currentDir);
-
   // Settings
   interface SystemPrompt {
     id: string;
@@ -32,7 +30,7 @@
     ocr_model: string;
     extraction_url: string;
     extraction_model: string;
-    receipt_dir: string;
+    receipt_dirs: string[];
     json_schema_keys: string[];
     system_prompts: SystemPrompt[];
     active_system_prompt_id: string;
@@ -43,7 +41,7 @@
     ocr_model: '',
     extraction_url: '',
     extraction_model: '',
-    receipt_dir: '',
+    receipt_dirs: [],
     json_schema_keys: [],
     system_prompts: [],
     active_system_prompt_id: '',
@@ -57,7 +55,6 @@
       try {
         const s = await invoke<AppSettings>('get_settings');
         settings = s;
-        if (s.receipt_dir && !dirInput) dirInput = s.receipt_dir;
       } catch {}
       try {
         apiKey = await invoke<string>('get_api_key');
@@ -68,7 +65,9 @@
     })();
   });
 
-  // Load image (or PDF rendered to PNG) when selection changes
+  const isPdf = (path: string) => path.toLowerCase().endsWith('.pdf');
+
+  // Load image when selection changes; PDFs use receipt:// URI scheme directly
   $effect(() => {
     const file = receipts.selectedFile;
     zoom = 1;
@@ -77,13 +76,19 @@
 
     if (!file) {
       imageData = null;
+      imageLoading = false;
+      return;
+    }
+
+    if (isPdf(file.source_path)) {
+      imageLoading = false;
+      imageData = 'receipt://localhost' + file.source_path.split('/').map(encodeURIComponent).join('/');
       return;
     }
 
     imageLoading = true;
     imageData = null;
-    const cmd = file.type === 'pdf' ? 'render_pdf_preview' : 'read_image_base64';
-    invoke<string>(cmd, { path: file.path })
+    invoke<string>('read_image_base64', { path: file.source_path })
       .then(data => { imageData = data; })
       .catch((e) => {
         imageData = null;
@@ -92,29 +97,32 @@
       .finally(() => { imageLoading = false; });
   });
 
-  async function scanDir() {
-    const dir = dirInput.trim();
-    if (!dir) return;
-    receipts.setDir(dir);
+  async function refreshReceipts() {
     try {
-      const files = await invoke<ReceiptFile[]>('scan_receipts', { dir });
+      const files = await invoke<ReceiptEntry[]>('scan_all_receipt_dirs');
       receipts.setFiles(files);
     } catch (e: unknown) {
       showToast('error', `Scan failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
+  onMount(async () => {
+    if (receipts.files.length === 0) {
+      await refreshReceipts();
+    }
+  });
+
   async function processSelected() {
     const file = receipts.selectedFile;
     if (!file) return;
-    receipts.setProcessing(file.path, true);
+    receipts.setProcessing(file.source_path, true);
     try {
       const activePrompt = settings.system_prompts.find(
         (p) => p.id === settings.active_system_prompt_id,
       );
-      const record = await invoke<ReceiptRecord>('process_receipt', {
-        path: file.path,
-        fileType: file.type,
+      const result = await invoke<{ fields: Record<string, string> }>('process_receipt', {
+        path: file.source_path,
+        fileType: isPdf(file.source_path) ? 'pdf' : 'image',
         apiUrl: settings.url,
         ocrModel: settings.ocr_model,
         extractionUrl: settings.extraction_url,
@@ -124,19 +132,28 @@
         jsonSchemaKeys: settings.json_schema_keys,
         apiKey: apiKey,
       });
-      receipts.setRecord(file.path, record);
-    } catch (e: unknown) {
-      showToast('error', `OCR failed: ${e instanceof Error ? e.message : String(e)}`);
+      const entry = receipts.files.find(f => f.source_path === file.source_path);
+      if (entry) {
+        entry.fields = result.fields;
+        entry.status = 'Processed';
+      }
+      const indexMap: Record<string, unknown> = {};
+      for (const f of receipts.files) {
+        indexMap[f.source_path] = f;
+      }
+      await invoke('save_receipt_index', { index: indexMap });
+    } catch {
+      // backend emits log event with error details
     } finally {
-      receipts.setProcessing(file.path, false);
+      receipts.setProcessing(file.source_path, false);
     }
   }
 
   let exporting = $state(false);
 
   async function exportCsv() {
-    const records = [...receipts.records.values()];
-    if (records.length === 0) {
+    const processed = receipts.files.filter(f => f.status === 'Processed');
+    if (processed.length === 0) {
       showToast('warn', 'No processed receipts to export.');
       return;
     }
@@ -150,8 +167,8 @@
       const keys = settings.json_schema_keys?.length
         ? settings.json_schema_keys
         : ['date', 'category', 'entity', 'amount', 'payment_method', 'source_path'];
-      await invoke('export_csv', { records, keys, outputPath });
-      showToast('success', `Exported ${records.length} receipt(s) to CSV.`);
+      await invoke('export_csv', { records: processed, keys, outputPath });
+      showToast('success', `Exported ${processed.length} receipt(s) to CSV.`);
     } catch (e: unknown) {
       showToast('error', `Export failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -204,43 +221,45 @@
   const isTransformed = $derived(zoom !== 1 || panX !== 0 || panY !== 0);
   const selectedPath = $derived(receipts.selectedPath);
   const isProcessing = $derived(selectedPath ? receipts.isProcessing(selectedPath) : false);
-  const record = $derived(receipts.selectedRecord);
-
+  const record = $derived(receipts.selectedFile);
+  const processedCount = $derived(receipts.files.filter(f => f.status === 'Processed').length);
 </script>
 
 <div class="viewer">
   <!-- File list panel -->
   <aside class="file-panel">
-    <div class="dir-row">
-      <input
-        class="dir-input"
-        type="text"
-        placeholder="Directory path…"
-        bind:value={dirInput}
-        onkeydown={(e) => e.key === 'Enter' && scanDir()}
-      />
-      <button class="btn-scan" onclick={scanDir}>Scan</button>
+    <div class="panel-header">
+      <span class="panel-title">Receipts</span>
+      <button
+        class="icon-btn"
+        onclick={refreshReceipts}
+        title="Refresh receipts"
+        aria-label="Refresh receipts"
+      >⟳</button>
     </div>
 
     <ul class="file-list" role="listbox" aria-label="Receipt files">
-      {#each receipts.files as file (file.path)}
-        {@const name = file.path.split('/').at(-1) ?? file.path}
-        {@const done = receipts.records.has(file.path)}
+      {#each receipts.files as file (file.source_path)}
+        {@const name = file.source_path.split('/').at(-1) ?? file.source_path}
+        {@const done = file.status === 'Processed'}
         <li
           class="file-item"
-          class:selected={receipts.selectedPath === file.path}
+          class:selected={receipts.selectedPath === file.source_path}
           class:done
-          onclick={() => receipts.selectFile(file.path)}
-          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && receipts.selectFile(file.path)}
+          onclick={() => receipts.selectFile(file.source_path)}
+          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && receipts.selectFile(file.source_path)}
           role="option"
-          aria-selected={receipts.selectedPath === file.path}
+          aria-selected={receipts.selectedPath === file.source_path}
           tabindex="0"
-          title={file.path}
+          title={file.source_path}
         >
-          <span class="badge">{file.type === 'pdf' ? 'PDF' : 'IMG'}</span>
+          <span class="badge">{isPdf(file.source_path) ? 'PDF' : 'IMG'}</span>
           <span class="filename">{name}</span>
           {#if done}
             <span class="check" aria-label="processed">✓</span>
+          {/if}
+          {#if file.status === 'Unprocessed'}
+            <span class="unprocessed" aria-label="unprocessed">○</span>
           {/if}
         </li>
       {/each}
@@ -269,6 +288,7 @@
         alt="Receipt"
         draggable="false"
         style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;"
+        onerror={() => showToast('error', `Failed to render PDF: ${receipts.selectedFile?.source_path ?? ''}`)}
       />
     {:else}
       <div class="placeholder muted">Select a receipt from the list</div>
@@ -287,7 +307,7 @@
         <button
           class="btn-export"
           onclick={exportCsv}
-          disabled={exporting || receipts.records.size === 0}
+          disabled={exporting || processedCount === 0}
           title="Export all processed receipts to CSV"
         >
           {exporting ? 'Exporting…' : 'Export CSV'}
@@ -303,7 +323,7 @@
     </div>
 
     <div class="fields-body">
-      {#if record}
+      {#if record && record.fields}
         {#each Object.entries(record.fields) as [key, value]}
           <div class="field-group">
             <label for="field-{key}">{key.replace(/_/g, ' ')}</label>
@@ -311,7 +331,7 @@
               id="field-{key}"
               type="text"
               value={value}
-              oninput={(e) => selectedPath && receipts.updateField(selectedPath, key, e.currentTarget.value)}
+              oninput={(e) => { if (record && record.fields) record.fields[key] = e.currentTarget.value; }}
             />
           </div>
         {/each}
@@ -344,44 +364,49 @@
     overflow: hidden;
   }
 
-  .dir-row {
+  .panel-header {
     display: flex;
-    gap: var(--space-2);
-    padding: var(--space-3);
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--color-border);
   }
 
-  .dir-input {
-    flex: 1;
-    min-width: 0;
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: var(--color-surface-raised);
-    color: var(--color-text);
+  .panel-title {
     font-size: var(--font-size-sm);
-    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
-  .dir-input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-  }
-
-  .btn-scan {
-    padding: var(--space-1) var(--space-3);
-    background: var(--color-primary);
-    color: #fff;
-    border: none;
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
     cursor: pointer;
-    font-size: var(--font-size-sm);
-    font-weight: 500;
-    white-space: nowrap;
-    transition: background var(--duration-fast) var(--easing-default);
+    font-size: 1rem;
+    transition: color var(--duration-fast) var(--easing-default),
+                border-color var(--duration-fast) var(--easing-default),
+                background var(--duration-fast) var(--easing-default);
   }
 
-  .btn-scan:hover { background: var(--color-primary-hover); }
+  .icon-btn:hover {
+    color: var(--color-text);
+    border-color: var(--color-border);
+    background: var(--color-surface-raised);
+  }
+
+  .icon-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
 
   .file-list {
     flex: 1;
@@ -409,6 +434,11 @@
     background: color-mix(in srgb, var(--color-primary) 15%, transparent);
   }
 
+  .file-item:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+  }
+
   .badge {
     font-size: 0.65rem;
     padding: 1px 4px;
@@ -432,6 +462,12 @@
 
   .check {
     color: var(--color-success);
+    font-size: 0.75rem;
+    flex-shrink: 0;
+  }
+
+  .unprocessed {
+    color: var(--color-text-muted);
     font-size: 0.75rem;
     flex-shrink: 0;
   }
