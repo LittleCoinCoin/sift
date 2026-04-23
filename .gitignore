@@ -26,6 +26,9 @@ Thumbs.db
 src-tauri/target/
 src-tauri/gen/
 
+# Playwright MCP tool cache
+.playwright-mcp/
+
 # Logs
 *.log
 npm-debug.log*
