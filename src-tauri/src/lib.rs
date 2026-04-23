@@ -191,6 +191,31 @@ async fn save_receipt_index(
     receipt_index::save_index(&app, &index).await
 }
 
+#[tauri::command]
+async fn delete_receipt_files(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut deleted: Vec<String> = Vec::new();
+    let mut index = receipt_index::load_index(&app).await.unwrap_or_default();
+    for path in &paths {
+        match std::fs::remove_file(path) {
+            Ok(_) => {
+                index.remove(path);
+                deleted.push(path.clone());
+                emit_log(&app, LogLevel::Info, format!("Deleted {}", path));
+            }
+            Err(e) => {
+                emit_log(&app, LogLevel::Error, format!("Delete failed for {}: {}", path, e));
+            }
+        }
+    }
+    if !deleted.is_empty() {
+        let _ = receipt_index::save_index(&app, &index).await;
+    }
+    Ok(deleted)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol("receipt", |_ctx, request, responder| {
@@ -217,6 +242,7 @@ pub fn run() {
             open_directory_picker,
             load_receipt_index,
             save_receipt_index,
+            delete_receipt_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

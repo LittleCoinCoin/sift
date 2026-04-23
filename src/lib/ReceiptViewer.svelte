@@ -2,9 +2,13 @@
   import { invoke } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { receipts } from './stores/receipts.svelte';
   import type { ReceiptEntry } from './stores/receipts.svelte';
   import { showToast } from './stores/log';
+  import FileSearchBar from './FileSearchBar.svelte';
+  import ReceiptFileTree from './ReceiptFileTree.svelte';
+  import ContextMenu from './ContextMenu.svelte';
 
   // Image display state
   let imageData = $state<string | null>(null);
@@ -113,40 +117,44 @@
   });
 
   async function processSelected() {
-    const file = receipts.selectedFile;
-    if (!file) return;
-    receipts.setProcessing(file.source_path, true);
-    try {
-      const activePrompt = settings.system_prompts.find(
-        (p) => p.id === settings.active_system_prompt_id,
-      );
-      const result = await invoke<{ fields: Record<string, string> }>('process_receipt', {
-        path: file.source_path,
-        fileType: isPdf(file.source_path) ? 'pdf' : 'image',
-        apiUrl: settings.url,
-        ocrModel: settings.ocr_model,
-        extractionUrl: settings.extraction_url,
-        extractionModel: settings.extraction_model,
-        extractionApiKey: extractionApiKey,
-        activeSystemPrompt: activePrompt?.content ?? '',
-        jsonSchemaKeys: settings.json_schema_keys,
-        apiKey: apiKey,
-      });
-      const entry = receipts.files.find(f => f.source_path === file.source_path);
-      if (entry) {
-        entry.fields = result.fields;
-        entry.status = 'Processed';
+    const paths = [...receipts.selectedPaths];
+    if (paths.length === 0) return;
+    const activePrompt = settings.system_prompts.find(p => p.id === settings.active_system_prompt_id);
+    const total = paths.length;
+    let done = 0;
+    for (const path of paths) {
+      receipts.setProcessing(path, true);
+      try {
+        const result = await invoke<{ fields: Record<string, string> }>('process_receipt', {
+          path,
+          fileType: isPdf(path) ? 'pdf' : 'image',
+          apiUrl: settings.url,
+          ocrModel: settings.ocr_model,
+          extractionUrl: settings.extraction_url,
+          extractionModel: settings.extraction_model,
+          extractionApiKey: extractionApiKey,
+          activeSystemPrompt: activePrompt?.content ?? '',
+          jsonSchemaKeys: settings.json_schema_keys,
+          apiKey: apiKey,
+          done: ++done,
+          total,
+        });
+        const entry = receipts.files.find(f => f.source_path === path);
+        if (entry) {
+          entry.fields = result.fields;
+          entry.status = 'Processed';
+        }
+      } catch {
+        // backend emits log event with error details
+      } finally {
+        receipts.setProcessing(path, false);
       }
-      const indexMap: Record<string, unknown> = {};
-      for (const f of receipts.files) {
-        indexMap[f.source_path] = f;
-      }
-      await invoke('save_receipt_index', { index: indexMap });
-    } catch {
-      // backend emits log event with error details
-    } finally {
-      receipts.setProcessing(file.source_path, false);
     }
+    const indexMap: Record<string, unknown> = {};
+    for (const f of receipts.files) {
+      indexMap[f.source_path] = f;
+    }
+    await invoke('save_receipt_index', { index: indexMap });
   }
 
   let exporting = $state(false);
@@ -218,11 +226,51 @@
     panY = 0;
   }
 
+  type ReceiptStatus = ReceiptEntry['status'];
+
+  // Tree/filter state
+  let viewMode = $state<'tree' | 'flat'>('tree');
+  let filter = $state<{ text: string; statusFilters: ReceiptStatus[] }>({ text: '', statusFilters: [] });
+  let treeSelectedPaths = $state(new SvelteSet<string>());
+
+  // Sync tree selection → store
+  $effect(() => {
+    receipts.selectedPaths = new Set(treeSelectedPaths);
+  });
+
+  // Seed tree selection from store on first load
+  $effect(() => {
+    const storeFirst = [...receipts.selectedPaths][0];
+    if (storeFirst && treeSelectedPaths.size === 0) {
+      treeSelectedPaths = new SvelteSet(receipts.selectedPaths);
+    }
+  });
+
   const isTransformed = $derived(zoom !== 1 || panX !== 0 || panY !== 0);
-  const selectedPath = $derived(receipts.selectedPath);
-  const isProcessing = $derived(selectedPath ? receipts.isProcessing(selectedPath) : false);
+  const isProcessing = $derived([...receipts.selectedPaths].some(p => receipts.isProcessing(p)));
   const record = $derived(receipts.selectedFile);
   const processedCount = $derived(receipts.files.filter(f => f.status === 'Processed').length);
+
+  // Context menu
+  let contextMenu = $state<{ x: number; y: number; paths: string[] } | null>(null);
+
+  function onTreeContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    if (receipts.selectedPaths.size === 0) return;
+    contextMenu = { x: e.clientX, y: e.clientY, paths: [...receipts.selectedPaths] };
+  }
+
+  async function deleteFiles(paths: string[]) {
+    contextMenu = null;
+    try {
+      const deleted = await invoke<string[]>('delete_receipt_files', { paths });
+      receipts.files = receipts.files.filter(f => !deleted.includes(f.source_path));
+      for (const p of deleted) receipts.removeSelection(p);
+      if (deleted.length > 0) showToast('success', `Deleted ${deleted.length} receipt(s).`);
+    } catch (e: unknown) {
+      showToast('error', `Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 </script>
 
 <div class="viewer">
@@ -230,43 +278,46 @@
   <aside class="file-panel">
     <div class="panel-header">
       <span class="panel-title">Receipts</span>
-      <button
-        class="icon-btn"
-        onclick={refreshReceipts}
-        title="Refresh receipts"
-        aria-label="Refresh receipts"
-      >⟳</button>
+      <div class="panel-header-actions">
+        <button
+          class="icon-btn"
+          onclick={() => { viewMode = viewMode === 'tree' ? 'flat' : 'tree'; }}
+          title={viewMode === 'tree' ? 'Switch to flat list' : 'Switch to tree view'}
+          aria-label={viewMode === 'tree' ? 'Switch to flat list' : 'Switch to tree view'}
+          aria-pressed={viewMode === 'flat'}
+        >{viewMode === 'tree' ? '☰' : '⊞'}</button>
+        <button
+          class="icon-btn"
+          onclick={refreshReceipts}
+          title="Refresh receipts"
+          aria-label="Refresh receipts"
+        >⟳</button>
+      </div>
     </div>
 
-    <ul class="file-list" role="listbox" aria-label="Receipt files">
-      {#each receipts.files as file (file.source_path)}
-        {@const name = file.source_path.split('/').at(-1) ?? file.source_path}
-        {@const done = file.status === 'Processed'}
-        <li
-          class="file-item"
-          class:selected={receipts.selectedPath === file.source_path}
-          class:done
-          onclick={() => receipts.selectFile(file.source_path)}
-          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && receipts.selectFile(file.source_path)}
-          role="option"
-          aria-selected={receipts.selectedPath === file.source_path}
-          tabindex="0"
-          title={file.source_path}
-        >
-          <span class="badge">{isPdf(file.source_path) ? 'PDF' : 'IMG'}</span>
-          <span class="filename">{name}</span>
-          {#if done}
-            <span class="check" aria-label="processed">✓</span>
-          {/if}
-          {#if file.status === 'Unprocessed'}
-            <span class="unprocessed" aria-label="unprocessed">○</span>
-          {/if}
-        </li>
-      {/each}
-      {#if receipts.files.length === 0}
-        <li class="empty">No receipts loaded</li>
-      {/if}
-    </ul>
+    <div class="search-bar-wrap">
+      <FileSearchBar onfilter={(f) => { filter = f; }} />
+    </div>
+
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="tree-wrap" oncontextmenu={onTreeContextMenu}>
+      <ReceiptFileTree
+        entries={receipts.files}
+        {filter}
+        {viewMode}
+        bind:selectedPaths={treeSelectedPaths}
+      />
+    </div>
+
+    <div class="panel-footer">
+      <button
+        class="btn-process"
+        onclick={processSelected}
+        disabled={receipts.selectedPaths.size === 0 || isProcessing}
+      >
+        {isProcessing ? 'Processing…' : 'Process'}
+      </button>
+    </div>
   </aside>
 
   <!-- Image pane -->
@@ -299,6 +350,16 @@
     {/if}
   </div>
 
+  {#if contextMenu}
+    <ContextMenu
+      x={contextMenu.x}
+      y={contextMenu.y}
+      paths={contextMenu.paths}
+      ondelete={deleteFiles}
+      onclose={() => { contextMenu = null; }}
+    />
+  {/if}
+
   <!-- Fields pane -->
   <div class="fields-pane">
     <div class="fields-header">
@@ -311,13 +372,6 @@
           title="Export all processed receipts to CSV"
         >
           {exporting ? 'Exporting…' : 'Export CSV'}
-        </button>
-        <button
-          class="btn-process"
-          onclick={processSelected}
-          disabled={!receipts.selectedFile || isProcessing}
-        >
-          {isProcessing ? 'Processing…' : 'Process'}
         </button>
       </div>
     </div>
@@ -370,6 +424,13 @@
     justify-content: space-between;
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+
+  .panel-header-actions {
+    display: flex;
+    gap: var(--space-1);
+    align-items: center;
   }
 
   .panel-title {
@@ -408,75 +469,23 @@
     outline-offset: 1px;
   }
 
-  .file-list {
-    flex: 1;
-    overflow-y: auto;
-    list-style: none;
-    padding: var(--space-2) 0;
-    margin: 0;
-  }
-
-  .file-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    cursor: pointer;
-    font-size: var(--font-size-sm);
-    color: var(--color-text);
-    transition: background var(--duration-fast) var(--easing-default);
-    user-select: none;
-  }
-
-  .file-item:hover { background: var(--color-surface-raised); }
-
-  .file-item.selected {
-    background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-  }
-
-  .file-item:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: -2px;
-  }
-
-  .badge {
-    font-size: 0.65rem;
-    padding: 1px 4px;
-    border-radius: var(--radius-sm);
-    background: var(--color-surface-raised);
-    color: var(--color-text-muted);
-    border: 1px solid var(--color-border);
+  .search-bar-wrap {
+    padding: var(--space-2) var(--space-2);
     flex-shrink: 0;
-    font-family: var(--font-mono);
-    letter-spacing: 0.02em;
+    border-bottom: 1px solid var(--color-border);
   }
 
-  .filename {
+  .tree-wrap {
     flex: 1;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: flex;
+    flex-direction: column;
   }
 
-  .file-item.done .filename { color: var(--color-success); }
-
-  .check {
-    color: var(--color-success);
-    font-size: 0.75rem;
+  .panel-footer {
     flex-shrink: 0;
-  }
-
-  .unprocessed {
-    color: var(--color-text-muted);
-    font-size: 0.75rem;
-    flex-shrink: 0;
-  }
-
-  .empty {
-    padding: var(--space-6) var(--space-4);
-    color: var(--color-text-muted);
-    font-size: var(--font-size-sm);
-    text-align: center;
+    padding: var(--space-2) var(--space-3);
+    border-top: 1px solid var(--color-border);
   }
 
   /* ── Image pane ─────────────────── */
@@ -589,6 +598,7 @@
   }
 
   .btn-process {
+    width: 100%;
     padding: var(--space-2) var(--space-4);
     background: var(--color-primary);
     color: #fff;
@@ -599,6 +609,11 @@
     font-weight: 500;
     transition: background var(--duration-fast) var(--easing-default);
     white-space: nowrap;
+  }
+
+  .btn-process:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .btn-process:hover:not(:disabled) { background: var(--color-primary-hover); }
