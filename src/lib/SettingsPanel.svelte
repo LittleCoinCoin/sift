@@ -12,7 +12,7 @@
   let model = $state('');
   let extractionUrl = $state('');
   let extractionModel = $state('');
-  let receiptDir = $state('');
+  let receiptDirs: string[] = $state([]);
   let jsonSchemaKeys: string[] = $state([...DEFAULT_SCHEMA_KEYS]);
   let systemPrompts: SystemPrompt[] = $state([]);
   let activePromptId = $state('');
@@ -91,7 +91,7 @@
         ocr_model: string;
         extraction_url: string;
         extraction_model: string;
-        receipt_dir: string;
+        receipt_dirs: string[];
         json_schema_keys: string[];
         system_prompts: SystemPrompt[];
         active_system_prompt_id: string;
@@ -100,7 +100,7 @@
       model = s.ocr_model ?? '';
       extractionUrl = s.extraction_url ?? '';
       extractionModel = s.extraction_model ?? '';
-      receiptDir = s.receipt_dir ?? '';
+      receiptDirs = s.receipt_dirs ?? [];
       jsonSchemaKeys = s.json_schema_keys?.length ? s.json_schema_keys : [...DEFAULT_SCHEMA_KEYS];
       systemPrompts = s.system_prompts ?? [];
       activePromptId = s.active_system_prompt_id ?? systemPrompts[0]?.id ?? '';
@@ -190,9 +190,17 @@
     extractionModels = [];
   }
 
-  async function pickDirectory() {
-    const selected = await open({ directory: true, multiple: false });
-    if (typeof selected === 'string') receiptDir = selected;
+  async function addReceiptDir() {
+    const selected = await invoke<string | null>('open_directory_picker');
+    if (selected && !receiptDirs.includes(selected)) {
+      receiptDirs = [...receiptDirs, selected];
+      await saveSettings();
+    }
+  }
+
+  function removeReceiptDir(dir: string) {
+    receiptDirs = receiptDirs.filter((d) => d !== dir);
+    saveSettings();
   }
 
   function updateCurrentVersion() {
@@ -221,7 +229,7 @@
         ocr_model: model,
         extraction_url: extractionUrl,
         extraction_model: extractionModel,
-        receipt_dir: receiptDir,
+        receipt_dirs: receiptDirs,
         json_schema_keys: jsonSchemaKeys,
         system_prompts: systemPrompts,
         active_system_prompt_id: activePromptId,
@@ -464,20 +472,26 @@
     </div>
   </section>
   {:else if activeTab === 'output'}
-  <!-- \u2500\u2500 Receipt directory \u2500\u2500 -->
+  <!-- ── Receipt directories ── -->
   <section class="settings-section">
-    <h3 class="section-heading">Receipt Directory</h3>
-    <div class="field-row">
-      <input
-        class="input input--readonly"
-        type="text"
-        readonly
-        value={receiptDir}
-        placeholder="(not set)"
-        aria-label="Receipt directory"
-      />
-      <button class="btn" onclick={pickDirectory}>Browse\u2026</button>
-    </div>
+    <h3 class="section-heading">Receipt Directories</h3>
+    {#if receiptDirs.length > 0}
+      <ul class="file-list" role="list" aria-label="Receipt directories">
+        {#each receiptDirs as dir (dir)}
+          <li class="file-item">
+            <span class="file-path">{dir}</span>
+            <button
+              class="btn-icon btn--remove"
+              onclick={() => removeReceiptDir(dir)}
+              aria-label={`Remove ${dir}`}
+            >&times;</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="empty-hint">No directories added yet.</p>
+    {/if}
+    <button class="btn btn--secondary" onclick={addReceiptDir}>+ Add Directory</button>
   </section>
 
   <!-- \u2500\u2500 Structured Output JSON Schema Keys \u2500\u2500 -->
@@ -687,9 +701,48 @@
     box-sizing: border-box;
   }
 
-  .input--readonly {
+  .file-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-bottom: var(--space-2);
+  }
+
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .file-path {
+    flex: 1;
+    font-size: var(--font-size-sm);
+    font-family: var(--font-mono);
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .empty-hint {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    margin-bottom: var(--space-2);
+  }
+
+  .btn--secondary {
+    background: var(--color-surface);
+    border-color: var(--color-border);
+    color: var(--color-text);
+  }
+
+  .btn--secondary:hover:not(:disabled) {
     background: var(--color-surface-raised);
-    cursor: default;
   }
 
   select.input {
