@@ -3,6 +3,7 @@ mod keyring_store;
 mod logger;
 mod ocr_client;
 pub mod receipt;
+pub mod receipt_index;
 pub mod scan;
 mod settings;
 
@@ -11,33 +12,6 @@ use receipt::ReceiptRecord;
 use scan::ReceiptFile;
 use tauri::Emitter;
 
-#[tauri::command]
-async fn scan_receipts(
-    app: tauri::AppHandle,
-    dir: String,
-) -> Result<Vec<serde_json::Value>, String> {
-    emit_log(&app, LogLevel::Info, format!("Scanning {}", dir));
-    let path = std::path::Path::new(&dir);
-    let files = scan::list_receipts(path).map_err(|e| {
-        emit_log(&app, LogLevel::Error, format!("Scan failed: {}", e));
-        e.to_string()
-    })?;
-    emit_log(&app, LogLevel::Success, format!("Found {} receipt(s)", files.len()));
-    let result = files
-        .into_iter()
-        .map(|f| match f {
-            ReceiptFile::Image(p) => serde_json::json!({
-                "type": "image",
-                "path": p.to_string_lossy()
-            }),
-            ReceiptFile::Pdf(p) => serde_json::json!({
-                "type": "pdf",
-                "path": p.to_string_lossy()
-            }),
-        })
-        .collect();
-    Ok(result)
-}
 
 #[tauri::command]
 async fn process_receipt(
@@ -83,6 +57,19 @@ async fn process_receipt(
     if let (Some(d), Some(t)) = (done, total) {
         let _ = app.emit("progress", ProgressEvent { done: d, total: t, avg_ms: elapsed_ms });
     }
+    // Persist processed status and extracted fields to the receipt index.
+    {
+        let mut index = receipt_index::load_index(&app).await.unwrap_or_default();
+        let entry = index.entry(path.clone()).or_insert_with(|| receipt_index::ReceiptEntry {
+            source_path: path.clone(),
+            status: receipt_index::ProcessingStatus::Unprocessed,
+            fields: None,
+            source_mtime: 0,
+        });
+        entry.status = receipt_index::ProcessingStatus::Processed;
+        entry.fields = Some(record.fields.clone());
+        let _ = receipt_index::save_index(&app, &index).await;
+    }
     Ok(record)
 }
 
@@ -120,6 +107,15 @@ fn render_pdf_preview(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn open_directory_picker(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog()
+        .file()
+        .blocking_pick_folder()
+        .map(|p| p.to_string())
+}
+
+#[tauri::command]
 fn read_image_base64(path: String) -> Result<String, String> {
     let data = std::fs::read(&path).map_err(|e| e.to_string())?;
     let ext = std::path::Path::new(&path)
@@ -141,8 +137,65 @@ fn read_image_base64(path: String) -> Result<String, String> {
     ))
 }
 
+fn handle_receipt_uri(
+    request: tauri::http::Request<Vec<u8>>,
+    responder: tauri::UriSchemeResponder,
+) {
+    let raw_path = request.uri().path().to_string();
+    let file_path = urlencoding::decode(&raw_path)
+        .map(|s| s.into_owned())
+        .unwrap_or(raw_path);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::Path::new(&file_path);
+        if !path.exists() {
+            responder.respond(
+                tauri::http::Response::builder()
+                    .status(404)
+                    .body(b"Not found".to_vec())
+                    .unwrap(),
+            );
+            return;
+        }
+        match receipt::render_pdf_first_page(path) {
+            Ok(png_bytes) => {
+                responder.respond(
+                    tauri::http::Response::builder()
+                        .header("Content-Type", "image/png")
+                        .body(png_bytes)
+                        .unwrap(),
+                );
+            }
+            Err(e) => {
+                responder.respond(
+                    tauri::http::Response::builder()
+                        .status(500)
+                        .body(e.to_string().into_bytes())
+                        .unwrap(),
+                );
+            }
+        }
+    });
+}
+
+#[tauri::command]
+async fn load_receipt_index(app: tauri::AppHandle) -> Result<receipt_index::ReceiptIndex, String> {
+    receipt_index::load_index(&app).await
+}
+
+#[tauri::command]
+async fn save_receipt_index(
+    app: tauri::AppHandle,
+    index: receipt_index::ReceiptIndex,
+) -> Result<(), String> {
+    receipt_index::save_index(&app, &index).await
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("receipt", |_ctx, request, responder| {
+            handle_receipt_uri(request, responder);
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -156,11 +209,14 @@ pub fn run() {
             keyring_store::delete_extraction_api_key,
             ocr_client::ping_endpoint,
             ocr_client::list_models,
-            scan_receipts,
+            scan::scan_all_receipt_dirs,
             process_receipt,
             export_csv,
             read_image_base64,
             render_pdf_preview,
+            open_directory_picker,
+            load_receipt_index,
+            save_receipt_index,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,8 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Clone)]
 pub enum ReceiptFile {
@@ -39,6 +41,68 @@ pub fn list_receipts(dir: &Path) -> Result<Vec<ReceiptFile>> {
         }
     }
     Ok(receipts)
+}
+
+#[tauri::command]
+pub async fn scan_all_receipt_dirs(
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::receipt_index::ReceiptEntry>, String> {
+    let settings = crate::settings::get_settings(app.clone())?;
+    let mut index = crate::receipt_index::load_index(&app).await?;
+
+    let mut found: HashSet<String> = HashSet::new();
+
+    for dir in &settings.receipt_dirs {
+        let root = Path::new(dir);
+        if !root.exists() {
+            continue;
+        }
+        for entry in walkdir::WalkDir::new(root)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let ext = p.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase());
+            if !matches!(
+                ext.as_deref(),
+                Some("pdf") | Some("png") | Some("jpg") | Some("jpeg") | Some("webp")
+            ) {
+                continue;
+            }
+            let key = p.to_string_lossy().into_owned();
+            found.insert(key.clone());
+
+            let mtime = fs::metadata(p)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            if let Some(existing) = index.get(&key) {
+                if existing.source_mtime == mtime {
+                    continue;
+                }
+            }
+            index.insert(
+                key.clone(),
+                crate::receipt_index::ReceiptEntry {
+                    source_path: key,
+                    status: crate::receipt_index::ProcessingStatus::Unprocessed,
+                    fields: None,
+                    source_mtime: mtime,
+                },
+            );
+        }
+    }
+
+    index.retain(|k, _| found.contains(k));
+    crate::receipt_index::save_index(&app, &index).await?;
+    Ok(index.into_values().collect())
 }
 
 #[cfg(test)]
