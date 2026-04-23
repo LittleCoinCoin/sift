@@ -7,7 +7,9 @@
   import SettingsPanel from './lib/SettingsPanel.svelte';
   import ReceiptViewer from './lib/ReceiptViewer.svelte';
   import { initLogStore } from './lib/stores/log';
+  // @ts-ignore
   import './lib/tokens.css';
+  // @ts-ignore
   import './lib/theme.css';
 
   let showSettings = $state(false);

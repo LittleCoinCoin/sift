@@ -1,9 +1,9 @@
 <script lang="ts">
   import { toasts, dismissToast } from './stores/log';
 
-  let copiedId = $state<string | null>(null);
+  let copiedId = $state<number | null>(null);
 
-  async function copyMessage(id: string, message: string) {
+  async function copyMessage(id: number, message: string) {
     await navigator.clipboard.writeText(message);
     copiedId = id;
     setTimeout(() => { copiedId = null; }, 1500);
