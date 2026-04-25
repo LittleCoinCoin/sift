@@ -11,11 +11,29 @@ use tokio::sync::watch;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
+    Idle,
     Running,
     Paused,
+    Resuming,
+    Cancelling,
     Cancelled,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileOutcomeStatus {
+    Processed,
+    Abandoned,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileOutcome {
+    pub path: String,
+    pub status: FileOutcomeStatus,
+    pub in_flight: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,13 +55,15 @@ pub struct JobConfig {
     pub json_schema_keys: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobSummary {
     pub job_id: String,
     pub status: JobStatus,
     pub total: u32,
-    pub done: u32,
+    pub processed: u32,
+    pub abandoned: u32,
     pub failed: u32,
+    pub files: Vec<FileOutcome>,
 }
 
 // === Internal control signal ===
@@ -59,11 +79,14 @@ enum ControlSignal {
 
 pub struct JobHandle {
     pub status: Arc<Mutex<JobStatus>>,
+    pub job_id: String,
+    app: AppHandle,
     ctrl_tx: watch::Sender<ControlSignal>,
-    done: Arc<AtomicU32>,
+    processed: Arc<AtomicU32>,
+    abandoned: Arc<AtomicU32>,
     failed: Arc<AtomicU32>,
     total: u32,
-    pub job_id: String,
+    outcomes: Arc<Mutex<Vec<FileOutcome>>>,
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -83,7 +106,7 @@ impl JobHandle {
         if *status != JobStatus::Paused {
             return Err(format!("Job is not paused (status: {:?})", *status));
         }
-        *status = JobStatus::Running;
+        *status = JobStatus::Resuming;
         self.ctrl_tx.send(ControlSignal::Run).ok();
         Ok(())
     }
@@ -94,7 +117,7 @@ impl JobHandle {
             JobStatus::Running | JobStatus::Paused => {}
             _ => return Err(format!("Job cannot be cancelled (status: {:?})", *status)),
         }
-        *status = JobStatus::Cancelled;
+        *status = JobStatus::Cancelling;
         self.ctrl_tx.send(ControlSignal::Cancel).ok();
         Ok(())
     }
@@ -104,8 +127,10 @@ impl JobHandle {
             job_id: self.job_id.clone(),
             status: self.status.lock().unwrap().clone(),
             total: self.total,
-            done: self.done.load(Ordering::Relaxed),
+            processed: self.processed.load(Ordering::Relaxed),
+            abandoned: self.abandoned.load(Ordering::Relaxed),
             failed: self.failed.load(Ordering::Relaxed),
+            files: self.outcomes.lock().unwrap().clone(),
         }
     }
 }
@@ -134,27 +159,34 @@ pub fn spawn_job(app: AppHandle, config: JobConfig) -> JobHandle {
     let job_id = new_job_id();
     let total = config.files.len() as u32;
     let status = Arc::new(Mutex::new(JobStatus::Running));
-    let done = Arc::new(AtomicU32::new(0));
+    let processed = Arc::new(AtomicU32::new(0));
+    let abandoned = Arc::new(AtomicU32::new(0));
     let failed = Arc::new(AtomicU32::new(0));
+    let outcomes = Arc::new(Mutex::new(Vec::new()));
     let (ctrl_tx, ctrl_rx) = watch::channel(ControlSignal::Run);
 
     let task = tokio::spawn(run_job(
-        app,
+        app.clone(),
         job_id.clone(),
         config,
         Arc::clone(&status),
         ctrl_rx,
-        Arc::clone(&done),
+        Arc::clone(&processed),
+        Arc::clone(&abandoned),
         Arc::clone(&failed),
+        Arc::clone(&outcomes),
     ));
 
     JobHandle {
         status,
+        job_id,
+        app,
         ctrl_tx,
-        done,
+        processed,
+        abandoned,
         failed,
         total,
-        job_id,
+        outcomes,
         _task: task,
     }
 }
@@ -167,8 +199,10 @@ async fn run_job(
     config: JobConfig,
     status: Arc<Mutex<JobStatus>>,
     mut ctrl_rx: watch::Receiver<ControlSignal>,
-    done_count: Arc<AtomicU32>,
+    processed_count: Arc<AtomicU32>,
+    _abandoned_count: Arc<AtomicU32>,
     failed_count: Arc<AtomicU32>,
+    _outcomes: Arc<Mutex<Vec<FileOutcome>>>,
 ) {
     use crate::logger::{emit_log, LogLevel, ProgressEvent};
     use crate::receipt_index::{load_index, save_index, ProcessingStatus, ReceiptEntry};
@@ -204,7 +238,7 @@ async fn run_job(
             _ => ReceiptFile::Image(PathBuf::from(&path)),
         };
 
-        let done_so_far = done_count.load(Ordering::Relaxed);
+        let done_so_far = processed_count.load(Ordering::Relaxed);
         let avg_so_far = if done_so_far > 0 { elapsed_sum / done_so_far as f64 } else { 0.0 };
 
         let _ = app.emit("progress", ProgressEvent {
@@ -252,7 +286,7 @@ async fn run_job(
                             }
                         }
 
-                        let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        let done = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
                         elapsed_sum += elapsed_ms;
                         let avg_ms = elapsed_sum / done as f64;
 
@@ -286,22 +320,22 @@ async fn run_job(
     }
 
     // All files iterated — determine final status.
-    let done = done_count.load(Ordering::Relaxed);
+    let processed = processed_count.load(Ordering::Relaxed);
     let failed = failed_count.load(Ordering::Relaxed);
-    let final_status = if done == 0 && failed > 0 {
+    let final_status = if processed == 0 && failed > 0 {
         JobStatus::Failed
     } else {
         JobStatus::Completed
     };
     *status.lock().unwrap() = final_status.clone();
 
-    let avg_ms = if done > 0 { elapsed_sum / done as f64 } else { 0.0 };
+    let avg_ms = if processed > 0 { elapsed_sum / processed as f64 } else { 0.0 };
     let completion_status = match &final_status {
         JobStatus::Failed => "failed",
         _ => "completed",
     };
     let _ = app.emit("progress", ProgressEvent {
-        done,
+        done: processed,
         total,
         avg_ms,
         job_id: Some(job_id),
