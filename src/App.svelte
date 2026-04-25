@@ -7,6 +7,7 @@
   import SettingsPanel from './lib/SettingsPanel.svelte';
   import ReceiptViewer from './lib/ReceiptViewer.svelte';
   import { initLogStore } from './lib/stores/log';
+  import { initJobStore } from './lib/stores/job.svelte';
   // @ts-ignore
   import './lib/tokens.css';
   // @ts-ignore
@@ -14,7 +15,7 @@
 
   let showSettings = $state(false);
 
-  onMount(() => { initLogStore(); });
+  onMount(() => { initLogStore(); initJobStore(); });
 </script>
 
 <Caustics />

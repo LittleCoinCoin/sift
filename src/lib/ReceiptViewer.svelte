@@ -6,6 +6,7 @@
   import { receipts } from './stores/receipts.svelte';
   import type { ReceiptEntry } from './stores/receipts.svelte';
   import { showToast } from './stores/log';
+  import { job } from './stores/job.svelte';
   import FileSearchBar from './FileSearchBar.svelte';
   import ReceiptFileTree from './ReceiptFileTree.svelte';
   import ContextMenu from './ContextMenu.svelte';
@@ -119,42 +120,11 @@
   async function processSelected() {
     const paths = [...receipts.selectedPaths];
     if (paths.length === 0) return;
-    const activePrompt = settings.system_prompts.find(p => p.id === settings.active_system_prompt_id);
-    const total = paths.length;
-    let done = 0;
-    for (const path of paths) {
-      receipts.setProcessing(path, true);
-      try {
-        const result = await invoke<{ fields: Record<string, string> }>('process_receipt', {
-          path,
-          fileType: isPdf(path) ? 'pdf' : 'image',
-          apiUrl: settings.url,
-          ocrModel: settings.ocr_model,
-          extractionUrl: settings.extraction_url,
-          extractionModel: settings.extraction_model,
-          extractionApiKey: extractionApiKey,
-          activeSystemPrompt: activePrompt?.content ?? '',
-          jsonSchemaKeys: settings.json_schema_keys,
-          apiKey: apiKey,
-          done: ++done,
-          total,
-        });
-        const entry = receipts.files.find(f => f.source_path === path);
-        if (entry) {
-          entry.fields = result.fields;
-          entry.status = 'Processed';
-        }
-      } catch {
-        // backend emits log event with error details
-      } finally {
-        receipts.setProcessing(path, false);
-      }
+    try {
+      await job.start(paths);
+    } catch (e: unknown) {
+      showToast('error', `Failed to start job: ${e instanceof Error ? e.message : String(e)}`);
     }
-    const indexMap: Record<string, unknown> = {};
-    for (const f of receipts.files) {
-      indexMap[f.source_path] = f;
-    }
-    await invoke('save_receipt_index', { index: indexMap });
   }
 
   let exporting = $state(false);
@@ -247,7 +217,7 @@
   });
 
   const isTransformed = $derived(zoom !== 1 || panX !== 0 || panY !== 0);
-  const isProcessing = $derived([...receipts.selectedPaths].some(p => receipts.isProcessing(p)));
+  const isProcessing = $derived(job.isActive);
   const record = $derived(receipts.selectedFile);
   const processedCount = $derived(receipts.files.filter(f => f.status === 'Processed').length);
 

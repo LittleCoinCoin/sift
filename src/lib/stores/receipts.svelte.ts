@@ -10,7 +10,6 @@ export type EditableField = string;
 class ReceiptStore {
   files = $state<ReceiptEntry[]>([]);
   selectedPaths = $state<Set<string>>(new Set());
-  processing = $state<Set<string>>(new Set());
 
   get selectedFile(): ReceiptEntry | null {
     const [first] = this.selectedPaths;
@@ -50,15 +49,6 @@ class ReceiptStore {
     }
   }
 
-  setProcessing(path: string, active: boolean) {
-    const next = new Set(this.processing);
-    if (active) next.add(path); else next.delete(path);
-    this.processing = next;
-  }
-
-  isProcessing(path: string): boolean {
-    return this.processing.has(path);
-  }
 }
 
 export const receipts = new ReceiptStore();
