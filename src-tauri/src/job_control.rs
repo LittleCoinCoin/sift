@@ -1,0 +1,311 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
+use tokio::sync::watch;
+
+// === Public types ===
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobStatus {
+    Running,
+    Paused,
+    Cancelled,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub path: String,
+    pub file_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobConfig {
+    pub files: Vec<FileEntry>,
+    pub api_url: String,
+    pub api_key: String,
+    pub ocr_model: String,
+    pub extraction_url: String,
+    pub extraction_api_key: String,
+    pub extraction_model: String,
+    pub active_system_prompt: String,
+    pub json_schema_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JobSummary {
+    pub job_id: String,
+    pub status: JobStatus,
+    pub total: u32,
+    pub done: u32,
+    pub failed: u32,
+}
+
+// === Internal control signal ===
+
+#[derive(Debug, Clone, PartialEq)]
+enum ControlSignal {
+    Run,
+    Pause,
+    Cancel,
+}
+
+// === Job handle ===
+
+pub struct JobHandle {
+    pub status: Arc<Mutex<JobStatus>>,
+    ctrl_tx: watch::Sender<ControlSignal>,
+    done: Arc<AtomicU32>,
+    failed: Arc<AtomicU32>,
+    total: u32,
+    pub job_id: String,
+    _task: tokio::task::JoinHandle<()>,
+}
+
+impl JobHandle {
+    pub fn pause(&self) -> Result<(), String> {
+        let mut status = self.status.lock().map_err(|e| e.to_string())?;
+        if *status != JobStatus::Running {
+            return Err(format!("Job is not running (status: {:?})", *status));
+        }
+        *status = JobStatus::Paused;
+        self.ctrl_tx.send(ControlSignal::Pause).ok();
+        Ok(())
+    }
+
+    pub fn resume(&self) -> Result<(), String> {
+        let mut status = self.status.lock().map_err(|e| e.to_string())?;
+        if *status != JobStatus::Paused {
+            return Err(format!("Job is not paused (status: {:?})", *status));
+        }
+        *status = JobStatus::Running;
+        self.ctrl_tx.send(ControlSignal::Run).ok();
+        Ok(())
+    }
+
+    pub fn cancel(&self) -> Result<(), String> {
+        let mut status = self.status.lock().map_err(|e| e.to_string())?;
+        match *status {
+            JobStatus::Running | JobStatus::Paused => {}
+            _ => return Err(format!("Job cannot be cancelled (status: {:?})", *status)),
+        }
+        *status = JobStatus::Cancelled;
+        self.ctrl_tx.send(ControlSignal::Cancel).ok();
+        Ok(())
+    }
+
+    pub fn summary(&self) -> JobSummary {
+        JobSummary {
+            job_id: self.job_id.clone(),
+            status: self.status.lock().unwrap().clone(),
+            total: self.total,
+            done: self.done.load(Ordering::Relaxed),
+            failed: self.failed.load(Ordering::Relaxed),
+        }
+    }
+}
+
+// === Registry ===
+
+pub struct JobRegistry(pub Mutex<HashMap<String, JobHandle>>);
+
+impl Default for JobRegistry {
+    fn default() -> Self {
+        Self(Mutex::new(HashMap::new()))
+    }
+}
+
+// === ID generation ===
+
+static JOB_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn new_job_id() -> String {
+    format!("job_{}", JOB_COUNTER.fetch_add(1, Ordering::Relaxed))
+}
+
+// === Spawn entry point ===
+
+pub fn spawn_job(app: AppHandle, config: JobConfig) -> JobHandle {
+    let job_id = new_job_id();
+    let total = config.files.len() as u32;
+    let status = Arc::new(Mutex::new(JobStatus::Running));
+    let done = Arc::new(AtomicU32::new(0));
+    let failed = Arc::new(AtomicU32::new(0));
+    let (ctrl_tx, ctrl_rx) = watch::channel(ControlSignal::Run);
+
+    let task = tokio::spawn(run_job(
+        app,
+        job_id.clone(),
+        config,
+        Arc::clone(&status),
+        ctrl_rx,
+        Arc::clone(&done),
+        Arc::clone(&failed),
+    ));
+
+    JobHandle {
+        status,
+        ctrl_tx,
+        done,
+        failed,
+        total,
+        job_id,
+        _task: task,
+    }
+}
+
+// === Orchestrator ===
+
+async fn run_job(
+    app: AppHandle,
+    job_id: String,
+    config: JobConfig,
+    status: Arc<Mutex<JobStatus>>,
+    mut ctrl_rx: watch::Receiver<ControlSignal>,
+    done_count: Arc<AtomicU32>,
+    failed_count: Arc<AtomicU32>,
+) {
+    use crate::logger::{emit_log, LogLevel, ProgressEvent};
+    use crate::receipt_index::{load_index, save_index, ProcessingStatus, ReceiptEntry};
+    use crate::scan::ReceiptFile;
+
+    let total = config.files.len() as u32;
+    let mut elapsed_sum = 0.0f64;
+
+    // Mark initial value as seen so ctrl_rx.changed() waits for a real change.
+    drop(ctrl_rx.borrow_and_update());
+
+    for file_entry in &config.files {
+        // --- pause/cancel checkpoint ---
+        loop {
+            let sig = ctrl_rx.borrow_and_update().clone();
+            match sig {
+                ControlSignal::Cancel => {
+                    *status.lock().unwrap() = JobStatus::Cancelled;
+                    return;
+                }
+                ControlSignal::Pause => {
+                    if ctrl_rx.changed().await.is_err() {
+                        return;
+                    }
+                }
+                ControlSignal::Run => break,
+            }
+        }
+
+        let path = file_entry.path.clone();
+        let receipt_file = match file_entry.file_type.as_str() {
+            "pdf" => ReceiptFile::Pdf(PathBuf::from(&path)),
+            _ => ReceiptFile::Image(PathBuf::from(&path)),
+        };
+
+        let done_so_far = done_count.load(Ordering::Relaxed);
+        let avg_so_far = if done_so_far > 0 { elapsed_sum / done_so_far as f64 } else { 0.0 };
+
+        let _ = app.emit("progress", ProgressEvent {
+            done: done_so_far,
+            total,
+            avg_ms: avg_so_far,
+            job_id: Some(job_id.clone()),
+            status: Some("running".to_string()),
+            current_file: Some(path.clone()),
+        });
+
+        emit_log(&app, LogLevel::Info, format!("Processing {}", path));
+
+        let start = std::time::Instant::now();
+
+        tokio::select! {
+            result = crate::receipt::process_receipt(
+                receipt_file,
+                &config.api_url,
+                &config.api_key,
+                &config.ocr_model,
+                &config.extraction_url,
+                &config.extraction_api_key,
+                &config.extraction_model,
+                &config.active_system_prompt,
+                &config.json_schema_keys,
+            ) => {
+                let elapsed_ms = start.elapsed().as_millis() as f64;
+                match result {
+                    Ok(record) => {
+                        match load_index(&app).await {
+                            Ok(mut index) => {
+                                let entry = index.entry(path.clone()).or_insert_with(|| ReceiptEntry {
+                                    source_path: path.clone(),
+                                    status: ProcessingStatus::Unprocessed,
+                                    fields: None,
+                                    source_mtime: 0,
+                                });
+                                entry.status = ProcessingStatus::Processed;
+                                entry.fields = Some(record.fields.clone());
+                                let _ = save_index(&app, &index).await;
+                            }
+                            Err(e) => {
+                                emit_log(&app, LogLevel::Error, format!("Failed to load receipt index: {}", e));
+                            }
+                        }
+
+                        let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        elapsed_sum += elapsed_ms;
+                        let avg_ms = elapsed_sum / done as f64;
+
+                        emit_log(&app, LogLevel::Success, format!("Processed {}", path));
+                        let _ = app.emit("progress", ProgressEvent {
+                            done,
+                            total,
+                            avg_ms,
+                            job_id: Some(job_id.clone()),
+                            status: Some("running".to_string()),
+                            current_file: Some(path.clone()),
+                        });
+                    }
+                    Err(e) => {
+                        failed_count.fetch_add(1, Ordering::Relaxed);
+                        emit_log(&app, LogLevel::Error, format!("Failed to process {}: {}", path, e));
+                    }
+                }
+            }
+            _ = ctrl_rx.changed() => {
+                // In-flight file dropped here (cancel-on-drop semantics for reqwest).
+                emit_log(&app, LogLevel::Warn, format!("Abandoned {} — not persisted to index", path));
+                let sig = ctrl_rx.borrow_and_update().clone();
+                if sig == ControlSignal::Cancel {
+                    *status.lock().unwrap() = JobStatus::Cancelled;
+                    return;
+                }
+                // Pause: outer loop will wait at the checkpoint on next iteration.
+            }
+        }
+    }
+
+    // All files iterated — determine final status.
+    let done = done_count.load(Ordering::Relaxed);
+    let failed = failed_count.load(Ordering::Relaxed);
+    let final_status = if done == 0 && failed > 0 {
+        JobStatus::Failed
+    } else {
+        JobStatus::Completed
+    };
+    *status.lock().unwrap() = final_status.clone();
+
+    let avg_ms = if done > 0 { elapsed_sum / done as f64 } else { 0.0 };
+    let completion_status = match &final_status {
+        JobStatus::Failed => "failed",
+        _ => "completed",
+    };
+    let _ = app.emit("progress", ProgressEvent {
+        done,
+        total,
+        avg_ms,
+        job_id: Some(job_id),
+        status: Some(completion_status.to_string()),
+        current_file: None,
+    });
+}
