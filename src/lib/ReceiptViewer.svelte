@@ -6,7 +6,7 @@
   import { receipts } from './stores/receipts.svelte';
   import type { ReceiptEntry } from './stores/receipts.svelte';
   import { showToast } from './stores/log';
-  import { job } from './stores/job.svelte';
+  import { job, type JobConfig } from './stores/job.svelte';
   import FileSearchBar from './FileSearchBar.svelte';
   import ReceiptFileTree from './ReceiptFileTree.svelte';
   import ContextMenu from './ContextMenu.svelte';
@@ -121,8 +121,24 @@
     const paths = [...receipts.selectedPaths];
     if (paths.length === 0) return;
     try {
-      // Placeholder: full JobConfig assembly wired in Step 4
-      await job.start(paths as unknown as import('./stores/job.svelte').JobConfig);
+      const activePrompt = settings.system_prompts.find(
+        p => p.id === settings.active_system_prompt_id,
+      );
+      const config: JobConfig = {
+        files: paths.map(p => ({
+          path: p,
+          file_type: isPdf(p) ? 'pdf' : 'image',
+        })),
+        api_url: settings.url,
+        api_key: apiKey,
+        ocr_model: settings.ocr_model,
+        extraction_url: settings.extraction_url,
+        extraction_api_key: extractionApiKey,
+        extraction_model: settings.extraction_model,
+        active_system_prompt: activePrompt?.content ?? '',
+        json_schema_keys: settings.json_schema_keys,
+      };
+      await job.start(config);
     } catch (e: unknown) {
       showToast('error', `Failed to start job: ${e instanceof Error ? e.message : String(e)}`);
     }
