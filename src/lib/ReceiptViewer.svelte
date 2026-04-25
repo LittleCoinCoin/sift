@@ -121,7 +121,8 @@
     const paths = [...receipts.selectedPaths];
     if (paths.length === 0) return;
     try {
-      await job.start(paths);
+      // Placeholder: full JobConfig assembly wired in Step 4
+      await job.start(paths as unknown as import('./stores/job.svelte').JobConfig);
     } catch (e: unknown) {
       showToast('error', `Failed to start job: ${e instanceof Error ? e.message : String(e)}`);
     }

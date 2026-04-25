@@ -2,51 +2,90 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { showToast, registerJobActiveCheck } from './log';
 
-export type JobStatus = 'Idle' | 'Running' | 'Paused' | 'Resuming' | 'Cancelling' | 'Cancelled';
+// Lowercase to match Rust's serde(rename_all = "snake_case")
+export type JobStatus =
+  | 'idle' | 'running' | 'paused' | 'resuming'
+  | 'cancelling' | 'cancelled' | 'completed' | 'failed';
+
+export type FileOutcomeStatus = 'processed' | 'abandoned' | 'failed';
+
+export interface FileOutcome {
+  path: string;
+  status: FileOutcomeStatus;
+  in_flight: boolean;
+}
 
 export interface JobSummary {
-  processed: number;
-  failed: number;
+  job_id: string;
+  status: JobStatus;
   total: number;
+  processed: number;
+  abandoned: number;
+  failed: number;
+  files: FileOutcome[];
+}
+
+// Snake_case field names match backend serde defaults (no rename on JobConfig/FileEntry).
+export interface FileEntry {
+  path: string;
+  file_type: string;
+}
+
+export interface JobConfig {
+  files: FileEntry[];
+  api_url: string;
+  api_key: string;
+  ocr_model: string;
+  extraction_url: string;
+  extraction_api_key: string;
+  extraction_model: string;
+  active_system_prompt: string;
+  json_schema_keys: string[];
 }
 
 const ACTIVE_STATUSES: ReadonlySet<JobStatus> = new Set([
-  'Running', 'Paused', 'Resuming', 'Cancelling',
+  'running', 'paused', 'resuming', 'cancelling',
 ]);
 
 let _initialized = false;
 
 class JobStore {
-  status = $state<JobStatus>('Idle');
+  status = $state<JobStatus>('idle');
   cancelSummary = $state<JobSummary | null>(null);
   cancelSummaryOpen = $state(false);
+  private _jobId: string | null = null;
 
   get isActive(): boolean {
     return ACTIVE_STATUSES.has(this.status);
   }
 
-  async start(paths: string[]) {
-    await invoke('start_job', { paths });
-    this.status = 'Running';
+  async start(config: JobConfig) {
+    const jobId = await invoke<string>('start_job', { config });
+    this._jobId = jobId;
+    this.status = 'running';
   }
 
   async pause() {
-    await invoke('pause_job');
-    this.status = 'Paused';
+    if (!this._jobId) return;
+    await invoke('pause_job', { jobId: this._jobId });
+    // Status will be confirmed via job_status event from orchestrator.
   }
 
   async resume() {
-    await invoke('resume_job');
-    this.status = 'Resuming';
+    if (!this._jobId) return;
+    await invoke('resume_job', { jobId: this._jobId });
+    // job_status: resuming is emitted immediately by handle, then running by orchestrator.
   }
 
   async cancel() {
-    await invoke('cancel_job');
-    this.status = 'Cancelling';
+    if (!this._jobId) return;
+    await invoke('cancel_job', { jobId: this._jobId });
+    // job_status: cancelling is emitted immediately by handle.
   }
 
   reset() {
-    this.status = 'Idle';
+    this.status = 'idle';
+    this._jobId = null;
     this.cancelSummary = null;
     this.cancelSummaryOpen = false;
   }
@@ -65,13 +104,13 @@ export async function initJobStore() {
 
   registerJobActiveCheck(() => job.isActive);
 
-  await listen<{ status: JobStatus }>('job_status', ({ payload }) => {
+  await listen<{ job_id: string; status: JobStatus }>('job_status', ({ payload }) => {
     job.status = payload.status;
   });
 
   // Fired when job completes normally — emit a single summary toast (Visual Spec §7)
   await listen<JobSummary>('job_done', ({ payload }) => {
-    job.status = 'Idle';
+    job.status = 'idle';
     const msg = payload.failed > 0
       ? `Processed ${payload.processed}/${payload.total} receipts (${payload.failed} failed).`
       : `Processed ${payload.processed} receipt${payload.processed !== 1 ? 's' : ''}.`;
@@ -80,7 +119,7 @@ export async function initJobStore() {
 
   // Fired when job is cancelled — open cancel summary modal instead of toast (Visual Spec §7)
   await listen<JobSummary>('job_cancelled', ({ payload }) => {
-    job.status = 'Cancelled';
+    job.status = 'cancelled';
     job.cancelSummary = payload;
     job.cancelSummaryOpen = true;
   });
