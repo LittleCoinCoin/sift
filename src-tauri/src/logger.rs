@@ -23,6 +23,12 @@ pub struct ProgressEvent {
     pub done: u32,
     pub total: u32,
     pub avg_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_file: Option<String>,
 }
 
 pub fn emit_log(app: &AppHandle, level: LogLevel, message: impl Into<String>) {
