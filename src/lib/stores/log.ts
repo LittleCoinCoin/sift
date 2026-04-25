@@ -21,6 +21,11 @@ export interface Toast extends LogEvent {
 
 let _nextId = 0;
 let _initialized = false;
+let _isJobActive: () => boolean = () => false;
+
+export function registerJobActiveCheck(fn: () => boolean) {
+  _isJobActive = fn;
+}
 
 export const toasts = writable<Toast[]>([]);
 export const progress = writable<ProgressState | null>(null);
@@ -41,6 +46,8 @@ export async function initLogStore() {
   _initialized = true;
 
   await listen<LogEvent>('log', ({ payload }) => {
+    // Suppress per-file success toasts while a job is running (Visual Spec §7)
+    if (payload.level === 'success' && _isJobActive()) return;
     const toast: Toast = { ...payload, id: _nextId++ };
     toasts.update(ts => [toast, ...ts].slice(0, 5));
 
