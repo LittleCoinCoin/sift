@@ -66,13 +66,19 @@ pub struct JobSummary {
     pub files: Vec<FileOutcome>,
 }
 
-// === Internal control signal ===
+// === Internal types ===
 
 #[derive(Debug, Clone, PartialEq)]
 enum ControlSignal {
     Run,
     Pause,
     Cancel,
+}
+
+#[derive(Clone, Serialize)]
+struct JobStatusEvent {
+    job_id: String,
+    status: JobStatus,
 }
 
 // === Job handle ===
@@ -98,6 +104,7 @@ impl JobHandle {
         }
         *status = JobStatus::Paused;
         self.ctrl_tx.send(ControlSignal::Pause).ok();
+        // Orchestrator confirms with job_status: Paused when it enters the wait loop.
         Ok(())
     }
 
@@ -107,6 +114,10 @@ impl JobHandle {
             return Err(format!("Job is not paused (status: {:?})", *status));
         }
         *status = JobStatus::Resuming;
+        let _ = self.app.emit("job_status", JobStatusEvent {
+            job_id: self.job_id.clone(),
+            status: JobStatus::Resuming,
+        });
         self.ctrl_tx.send(ControlSignal::Run).ok();
         Ok(())
     }
@@ -118,6 +129,10 @@ impl JobHandle {
             _ => return Err(format!("Job cannot be cancelled (status: {:?})", *status)),
         }
         *status = JobStatus::Cancelling;
+        let _ = self.app.emit("job_status", JobStatusEvent {
+            job_id: self.job_id.clone(),
+            status: JobStatus::Cancelling,
+        });
         self.ctrl_tx.send(ControlSignal::Cancel).ok();
         Ok(())
     }
@@ -162,7 +177,7 @@ pub fn spawn_job(app: AppHandle, config: JobConfig) -> JobHandle {
     let processed = Arc::new(AtomicU32::new(0));
     let abandoned = Arc::new(AtomicU32::new(0));
     let failed = Arc::new(AtomicU32::new(0));
-    let outcomes = Arc::new(Mutex::new(Vec::new()));
+    let outcomes: Arc<Mutex<Vec<FileOutcome>>> = Arc::new(Mutex::new(Vec::new()));
     let (ctrl_tx, ctrl_rx) = watch::channel(ControlSignal::Run);
 
     let task = tokio::spawn(run_job(
@@ -200,9 +215,9 @@ async fn run_job(
     status: Arc<Mutex<JobStatus>>,
     mut ctrl_rx: watch::Receiver<ControlSignal>,
     processed_count: Arc<AtomicU32>,
-    _abandoned_count: Arc<AtomicU32>,
+    abandoned_count: Arc<AtomicU32>,
     failed_count: Arc<AtomicU32>,
-    _outcomes: Arc<Mutex<Vec<FileOutcome>>>,
+    outcomes: Arc<Mutex<Vec<FileOutcome>>>,
 ) {
     use crate::logger::{emit_log, LogLevel, ProgressEvent};
     use crate::receipt_index::{load_index, save_index, ProcessingStatus, ReceiptEntry};
@@ -214,19 +229,55 @@ async fn run_job(
     // Mark initial value as seen so ctrl_rx.changed() waits for a real change.
     drop(ctrl_rx.borrow_and_update());
 
-    for file_entry in &config.files {
+    let _ = app.emit("job_status", JobStatusEvent {
+        job_id: job_id.clone(),
+        status: JobStatus::Running,
+    });
+
+    'file_loop: for (idx, file_entry) in config.files.iter().enumerate() {
         // --- pause/cancel checkpoint ---
         loop {
             let sig = ctrl_rx.borrow_and_update().clone();
             match sig {
                 ControlSignal::Cancel => {
-                    *status.lock().unwrap() = JobStatus::Cancelled;
+                    // Append this and all remaining files as unstarted-abandoned.
+                    for remaining in &config.files[idx..] {
+                        outcomes.lock().unwrap().push(FileOutcome {
+                            path: remaining.path.clone(),
+                            status: FileOutcomeStatus::Abandoned,
+                            in_flight: false,
+                        });
+                        abandoned_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                    emit_terminal_cancelled(&app, &job_id, &status, total, &processed_count, &abandoned_count, &failed_count, &outcomes);
                     return;
                 }
                 ControlSignal::Pause => {
+                    let _ = app.emit("job_status", JobStatusEvent {
+                        job_id: job_id.clone(),
+                        status: JobStatus::Paused,
+                    });
                     if ctrl_rx.changed().await.is_err() {
                         return;
                     }
+                    let next = ctrl_rx.borrow_and_update().clone();
+                    if next == ControlSignal::Cancel {
+                        // Append this and all remaining files as unstarted-abandoned.
+                        for remaining in &config.files[idx..] {
+                            outcomes.lock().unwrap().push(FileOutcome {
+                                path: remaining.path.clone(),
+                                status: FileOutcomeStatus::Abandoned,
+                                in_flight: false,
+                            });
+                            abandoned_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                        emit_terminal_cancelled(&app, &job_id, &status, total, &processed_count, &abandoned_count, &failed_count, &outcomes);
+                        return;
+                    }
+                    let _ = app.emit("job_status", JobStatusEvent {
+                        job_id: job_id.clone(),
+                        status: JobStatus::Running,
+                    });
                 }
                 ControlSignal::Run => break,
             }
@@ -290,6 +341,12 @@ async fn run_job(
                         elapsed_sum += elapsed_ms;
                         let avg_ms = elapsed_sum / done as f64;
 
+                        outcomes.lock().unwrap().push(FileOutcome {
+                            path: path.clone(),
+                            status: FileOutcomeStatus::Processed,
+                            in_flight: false,
+                        });
+
                         emit_log(&app, LogLevel::Success, format!("Processed {}", path));
                         let _ = app.emit("progress", ProgressEvent {
                             done,
@@ -302,6 +359,11 @@ async fn run_job(
                     }
                     Err(e) => {
                         failed_count.fetch_add(1, Ordering::Relaxed);
+                        outcomes.lock().unwrap().push(FileOutcome {
+                            path: path.clone(),
+                            status: FileOutcomeStatus::Failed,
+                            in_flight: false,
+                        });
                         emit_log(&app, LogLevel::Error, format!("Failed to process {}: {}", path, e));
                     }
                 }
@@ -309,12 +371,28 @@ async fn run_job(
             _ = ctrl_rx.changed() => {
                 // In-flight file dropped here (cancel-on-drop semantics for reqwest).
                 emit_log(&app, LogLevel::Warn, format!("Abandoned {} — not persisted to index", path));
+                abandoned_count.fetch_add(1, Ordering::Relaxed);
+                outcomes.lock().unwrap().push(FileOutcome {
+                    path: path.clone(),
+                    status: FileOutcomeStatus::Abandoned,
+                    in_flight: true,
+                });
                 let sig = ctrl_rx.borrow_and_update().clone();
                 if sig == ControlSignal::Cancel {
-                    *status.lock().unwrap() = JobStatus::Cancelled;
+                    // Collect all remaining unstarted files (idx+1 onward).
+                    for remaining in &config.files[idx + 1..] {
+                        outcomes.lock().unwrap().push(FileOutcome {
+                            path: remaining.path.clone(),
+                            status: FileOutcomeStatus::Abandoned,
+                            in_flight: false,
+                        });
+                        abandoned_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                    emit_terminal_cancelled(&app, &job_id, &status, total, &processed_count, &abandoned_count, &failed_count, &outcomes);
                     return;
                 }
-                // Pause: outer loop will wait at the checkpoint on next iteration.
+                // Pause: outer loop will wait at checkpoint on next iteration.
+                continue 'file_loop;
             }
         }
     }
@@ -330,7 +408,7 @@ async fn run_job(
     *status.lock().unwrap() = final_status.clone();
 
     let avg_ms = if processed > 0 { elapsed_sum / processed as f64 } else { 0.0 };
-    let completion_status = match &final_status {
+    let completion_status_str = match &final_status {
         JobStatus::Failed => "failed",
         _ => "completed",
     };
@@ -338,8 +416,50 @@ async fn run_job(
         done: processed,
         total,
         avg_ms,
-        job_id: Some(job_id),
-        status: Some(completion_status.to_string()),
+        job_id: Some(job_id.clone()),
+        status: Some(completion_status_str.to_string()),
         current_file: None,
     });
+
+    let summary = JobSummary {
+        job_id: job_id.clone(),
+        status: final_status.clone(),
+        total,
+        processed,
+        abandoned: abandoned_count.load(Ordering::Relaxed),
+        failed,
+        files: outcomes.lock().unwrap().clone(),
+    };
+    let _ = app.emit("job_status", JobStatusEvent {
+        job_id: job_id.clone(),
+        status: final_status,
+    });
+    let _ = app.emit("job_done", &summary);
+}
+
+fn emit_terminal_cancelled(
+    app: &AppHandle,
+    job_id: &str,
+    status: &Arc<Mutex<JobStatus>>,
+    total: u32,
+    processed_count: &Arc<AtomicU32>,
+    abandoned_count: &Arc<AtomicU32>,
+    failed_count: &Arc<AtomicU32>,
+    outcomes: &Arc<Mutex<Vec<FileOutcome>>>,
+) {
+    *status.lock().unwrap() = JobStatus::Cancelled;
+    let summary = JobSummary {
+        job_id: job_id.to_string(),
+        status: JobStatus::Cancelled,
+        total,
+        processed: processed_count.load(Ordering::Relaxed),
+        abandoned: abandoned_count.load(Ordering::Relaxed),
+        failed: failed_count.load(Ordering::Relaxed),
+        files: outcomes.lock().unwrap().clone(),
+    };
+    let _ = app.emit("job_status", JobStatusEvent {
+        job_id: job_id.to_string(),
+        status: JobStatus::Cancelled,
+    });
+    let _ = app.emit("job_cancelled", &summary);
 }
