@@ -36,6 +36,7 @@
 <div
   class="file-row"
   class:selected
+  class:processing={entry.status === 'Processing'}
   role="treeitem"
   aria-selected={selected}
   tabindex="0"
@@ -80,6 +81,21 @@
 
   .file-row.selected {
     background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  }
+
+  @keyframes processing-pulse {
+    0%, 100% { opacity: 0; }
+    50%       { opacity: 0.12; }
+  }
+
+  .file-row.processing::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--color-primary);
+    opacity: 0;
+    animation: processing-pulse 1.6s ease-in-out infinite;
+    pointer-events: none;
   }
 
   .file-row:focus { outline: none; }
