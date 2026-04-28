@@ -61,7 +61,7 @@
         {#if canCancel}
           <button
             class="ctrl-btn ctrl-btn--cancel"
-            onclick={() => job.cancel()}
+            onclick={() => job.requestCancel()}
             title="Cancel"
             aria-label="Cancel job"
           >✕</button>

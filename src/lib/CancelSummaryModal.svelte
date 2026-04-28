@@ -1,6 +1,7 @@
 <script lang="ts">
   import { job } from './stores/job.svelte';
-  import type { FileOutcome, FileOutcomeStatus } from './stores/job.svelte';
+  import { progress } from './stores/log';
+  import type { FileOutcomeStatus } from './stores/job.svelte';
 
   function statusLabel(s: FileOutcomeStatus): string {
     return s === 'processed' ? 'done' : s;
@@ -11,6 +12,15 @@
   }
 
   let modalEl: HTMLElement | null = $state(null);
+  const p = $derived($progress);
+
+  function handleClose() {
+    if (job.cancelModalMode === 'confirm') {
+      job.dismissCancelConfirm();
+    } else {
+      job.dismissCancelSummary();
+    }
+  }
 
   $effect(() => {
     if (!job.cancelSummaryOpen || !modalEl) return;
@@ -29,7 +39,7 @@
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
-        job.dismissCancelSummary();
+        handleClose();
         return;
       }
       if (e.key === 'Tab') {
@@ -60,52 +70,71 @@
   });
 </script>
 
-{#if job.cancelSummaryOpen && job.cancelSummary}
-  {@const s = job.cancelSummary}
+{#if job.cancelSummaryOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="backdrop" onclick={job.dismissCancelSummary.bind(job)}>
+  <div class="backdrop" onclick={handleClose}>
     <div
       bind:this={modalEl}
       class="modal"
       role="dialog"
       aria-modal="true"
-      aria-label="Cancellation summary"
+      aria-label={job.cancelModalMode === 'confirm' ? 'Cancel job confirmation' : 'Cancellation summary'}
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
     >
-      <div class="modal-header">
-        <span class="modal-title">Job Cancelled</span>
-        <button class="close-btn" onclick={job.dismissCancelSummary.bind(job)} aria-label="Close">×</button>
-      </div>
+      {#if job.cancelModalMode === 'confirm'}
+        <div class="modal-header">
+          <span class="modal-title">Cancel Job?</span>
+          <button class="close-btn" onclick={handleClose} aria-label="Close">×</button>
+        </div>
 
-      <div class="stats-row">
-        <span class="stat stat--processed">{s.processed} processed</span>
-        <span class="stat-sep">·</span>
-        <span class="stat stat--abandoned">{s.abandoned} abandoned</span>
-        {#if s.failed > 0}
+        <div class="stats-row">
+          <span class="stat stat--processed">{p?.done ?? 0} processed</span>
           <span class="stat-sep">·</span>
-          <span class="stat stat--failed">{s.failed} failed</span>
+          <span class="stat stat--abandoned">{(p?.total ?? 0) - (p?.done ?? 0)} remaining</span>
+          <span class="stat-total">of {p?.total ?? 0}</span>
+        </div>
+
+        <div class="modal-footer modal-footer--split">
+          <button class="dismiss-btn dismiss-btn--secondary" onclick={() => job.dismissCancelConfirm()}>Resume</button>
+          <button class="dismiss-btn dismiss-btn--danger" onclick={() => job.confirmCancel()}>Confirm Cancel</button>
+        </div>
+      {:else if job.cancelModalMode === 'summary' && job.cancelSummary}
+        {@const s = job.cancelSummary}
+        <div class="modal-header">
+          <span class="modal-title">Job Cancelled</span>
+          <button class="close-btn" onclick={handleClose} aria-label="Close">×</button>
+        </div>
+
+        <div class="stats-row">
+          <span class="stat stat--processed">{s.processed} processed</span>
+          <span class="stat-sep">·</span>
+          <span class="stat stat--abandoned">{s.abandoned} abandoned</span>
+          {#if s.failed > 0}
+            <span class="stat-sep">·</span>
+            <span class="stat stat--failed">{s.failed} failed</span>
+          {/if}
+          <span class="stat-total">of {s.total}</span>
+        </div>
+
+        {#if s.files.length > 0}
+          <ul class="file-list" aria-label="File outcomes">
+            {#each s.files as f (f.path)}
+              <li class="file-row file-row--{f.status}">
+                <span class="file-badge">{statusLabel(f.status)}</span>
+                <span class="file-path" title={f.path}>{basename(f.path)}</span>
+                {#if f.in_flight}
+                  <span class="in-flight-tag">mid-flight</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
         {/if}
-        <span class="stat-total">of {s.total}</span>
-      </div>
 
-      {#if s.files.length > 0}
-        <ul class="file-list" aria-label="File outcomes">
-          {#each s.files as f (f.path)}
-            <li class="file-row file-row--{f.status}">
-              <span class="file-badge">{statusLabel(f.status)}</span>
-              <span class="file-path" title={f.path}>{basename(f.path)}</span>
-              {#if f.in_flight}
-                <span class="in-flight-tag">mid-flight</span>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+        <div class="modal-footer">
+          <button class="dismiss-btn" onclick={handleClose}>Dismiss</button>
+        </div>
       {/if}
-
-      <div class="modal-footer">
-        <button class="dismiss-btn" onclick={job.dismissCancelSummary.bind(job)}>Dismiss</button>
-      </div>
     </div>
   </div>
 {/if}
@@ -248,6 +277,10 @@
     flex-shrink: 0;
   }
 
+  .modal-footer--split {
+    justify-content: space-between;
+  }
+
   .dismiss-btn {
     background: var(--color-primary);
     border: none;
@@ -260,6 +293,23 @@
     transition: background var(--duration-fast);
   }
   .dismiss-btn:hover { background: var(--color-primary-hover); }
+
+  .dismiss-btn--secondary {
+    background: none;
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+  }
+  .dismiss-btn--secondary:hover {
+    background: var(--color-surface-raised);
+    border-color: var(--color-text-muted);
+  }
+
+  .dismiss-btn--danger {
+    background: var(--color-error);
+  }
+  .dismiss-btn--danger:hover {
+    background: color-mix(in srgb, var(--color-error) 85%, #000);
+  }
 
   @keyframes fade-in {
     from { opacity: 0; }
