@@ -15,6 +15,8 @@
     avg_ms: number;
     current_file?: string;
     phase?: 'ocr' | 'extract';
+    file_started_at?: number;
+    job_started_at?: number;
   };
 
   const p = $derived($progress as ProgressWithPhase | null);
@@ -23,7 +25,29 @@
   const currentFile = $derived(
     p?.current_file ? (p.current_file.split('/').pop() ?? p.current_file) : null,
   );
-  const current_index = $derived(p ? p.done + 1 : 0);
+
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!job.isActive) return;
+    const id = setInterval(() => { now = Date.now(); }, 1000);
+    return () => clearInterval(id);
+  });
+
+  function formatOngoing(ms: number): string {
+    return `Ongoing: ${Math.floor(ms / 1000)} sec`;
+  }
+
+  function formatTotal(ms: number): string {
+    const sec = Math.floor(ms / 1000);
+    return `Total: ${Math.floor(sec / 60)} min ${sec % 60} sec`;
+  }
+
+  const ongoingStr = $derived(
+    p?.file_started_at != null ? formatOngoing(now - p.file_started_at) : null,
+  );
+  const totalStr = $derived(
+    p?.job_started_at != null ? formatTotal(now - p.job_started_at) : null,
+  );
 
   const canPause = $derived(job.status === 'running' || job.status === 'resuming');
   const canResume = $derived(job.status === 'paused');
@@ -41,7 +65,7 @@
       <div class="info">
         <div class="phase-row">
           {#if p?.phase === 'ocr'}
-            <span role="img" title="Content Extraction" aria-label="Content Extraction" class="phase-icon phase-icon--ocr">
+            <span role="img" aria-label="Content Extraction" data-tooltip="Content Extraction" class="phase-icon phase-icon--ocr">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M3 7V5a2 2 0 0 1 2-2h2"/>
                 <path d="M3 17v2a2 2 0 0 0 2 2h2"/>
@@ -51,7 +75,7 @@
               </svg>
             </span>
           {:else if p?.phase === 'extract'}
-            <span role="img" title="Content Analysis" aria-label="Content Analysis" class="phase-icon phase-icon--extract">
+            <span role="img" aria-label="Content Analysis" data-tooltip="Content Analysis" class="phase-icon phase-icon--extract">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/>
                 <path d="M5 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/>
@@ -77,7 +101,7 @@
         </div>
         {#if p}
           <div class="counts-row">
-            <span class="counts">{p.done} / {p.total} · file {current_index}</span>
+            <span class="counts">{p.done} / {p.total}{#if ongoingStr} · {ongoingStr}{/if}{#if totalStr} · {totalStr}{/if}</span>
           </div>
         {/if}
       </div>
@@ -182,7 +206,32 @@
     display: flex;
     align-items: center;
     flex-shrink: 0;
+    position: relative;
     transition: color var(--duration-fast) var(--easing-default);
+  }
+
+  .phase-icon[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--color-text);
+    color: var(--color-bg);
+    font-size: 0.7rem;
+    font-weight: 500;
+    white-space: nowrap;
+    padding: 3px 7px;
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-sm);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--easing-default);
+    z-index: calc(var(--z-overlay) + 1);
+  }
+
+  .phase-icon[data-tooltip]:hover::after {
+    opacity: 1;
   }
 
   .phase-icon--ocr {
