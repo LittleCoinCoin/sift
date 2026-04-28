@@ -105,7 +105,11 @@ export async function initJobStore() {
   registerJobActiveCheck(() => job.isActive);
 
   await listen<{ job_id: string; status: JobStatus }>('job_status', ({ payload }) => {
+    const prev = job.status;
     job.status = payload.status;
+    if (prev === 'running' && payload.status === 'paused') {
+      showToast('info', 'Job paused');
+    }
   });
 
   // Fired when job completes normally — emit a single summary toast (Visual Spec §7)
