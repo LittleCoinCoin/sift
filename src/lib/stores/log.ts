@@ -13,6 +13,7 @@ export interface ProgressState {
   done: number;
   total: number;
   avg_ms: number;
+  current_file?: string;
 }
 
 export interface Toast extends LogEvent {

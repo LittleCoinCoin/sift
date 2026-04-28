@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Toast from './lib/Toast.svelte';
-  import ProgressBar from './lib/ProgressBar.svelte';
+  import JobProgressOverlay from './lib/JobProgressOverlay.svelte';
   import Caustics from './lib/Caustics.svelte';
   import ThemeToggle from './lib/ThemeToggle.svelte';
   import SettingsPanel from './lib/SettingsPanel.svelte';
   import ReceiptViewer from './lib/ReceiptViewer.svelte';
+  import CancelSummaryModal from './lib/CancelSummaryModal.svelte';
   import { initLogStore } from './lib/stores/log';
   import { initJobStore } from './lib/stores/job.svelte';
   // @ts-ignore
@@ -19,8 +20,9 @@
 </script>
 
 <Caustics />
-<ProgressBar />
+<JobProgressOverlay />
 <Toast />
+<CancelSummaryModal />
 
 <header class="app-header">
   <span class="app-title">Receipts</span>

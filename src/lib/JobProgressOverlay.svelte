@@ -1,0 +1,179 @@
+<script lang="ts">
+  import { progress } from './stores/log';
+  import { job } from './stores/job.svelte';
+
+  function formatEta(avg_ms: number, remaining: number): string {
+    const ms = avg_ms * remaining;
+    if (ms < 1000) return '<1s';
+    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+    return `${Math.round(ms / 60_000)}m`;
+  }
+
+  const p = $derived($progress);
+  const pct = $derived(p && p.total > 0 ? (p.done / p.total) * 100 : 0);
+  const remaining = $derived(p ? p.total - p.done : 0);
+  const currentFile = $derived(
+    p?.current_file ? (p.current_file.split('/').pop() ?? p.current_file) : null,
+  );
+
+  const canPause = $derived(job.status === 'running' || job.status === 'resuming');
+  const canResume = $derived(job.status === 'paused');
+  const isCancelling = $derived(job.status === 'cancelling');
+  const canCancel = $derived(!isCancelling && job.status !== 'cancelled');
+</script>
+
+{#if job.isActive}
+  <div class="job-overlay" role="status" aria-label="Job in progress">
+    <div class="track" role="progressbar" aria-valuenow={p?.done ?? 0} aria-valuemax={p?.total ?? 0}>
+      <div class="fill" style="width: {pct}%"></div>
+    </div>
+
+    <div class="body">
+      <div class="info">
+        <span class="file-name" title={p?.current_file ?? undefined}>
+          {#if currentFile}
+            {currentFile}
+          {:else if isCancelling}
+            Cancelling…
+          {:else if job.status === 'paused'}
+            Paused
+          {:else}
+            Processing…
+          {/if}
+        </span>
+        {#if p}
+          <span class="counts">{p.done}/{p.total} · {formatEta(p.avg_ms, remaining)}</span>
+        {/if}
+      </div>
+
+      <div class="controls">
+        {#if isCancelling}
+          <span class="status-label">Cancelling…</span>
+        {:else if canPause}
+          <button class="ctrl-btn" onclick={() => job.pause()} title="Pause" aria-label="Pause job">
+            ⏸
+          </button>
+        {:else if canResume}
+          <button class="ctrl-btn" onclick={() => job.resume()} title="Resume" aria-label="Resume job">
+            ▶
+          </button>
+        {/if}
+        {#if canCancel}
+          <button
+            class="ctrl-btn ctrl-btn--cancel"
+            onclick={() => job.cancel()}
+            title="Cancel"
+            aria-label="Cancel job"
+          >✕</button>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .job-overlay {
+    position: fixed;
+    bottom: var(--space-5);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 320px;
+    background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+    z-index: var(--z-overlay);
+  }
+
+  .track {
+    height: 3px;
+    background: var(--color-border);
+  }
+
+  .fill {
+    height: 100%;
+    background: var(--color-primary);
+    transition: width var(--duration-fast) var(--easing-default);
+  }
+
+  .body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .file-name {
+    font-size: var(--font-size-sm);
+    color: var(--color-text);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .counts {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex-shrink: 0;
+  }
+
+  .ctrl-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 0.7rem;
+    transition:
+      color var(--duration-fast) var(--easing-default),
+      border-color var(--duration-fast) var(--easing-default),
+      background var(--duration-fast) var(--easing-default);
+  }
+
+  .ctrl-btn:hover {
+    color: var(--color-text);
+    border-color: var(--color-text-muted);
+    background: var(--color-surface-raised);
+  }
+
+  .ctrl-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .ctrl-btn--cancel:hover {
+    color: var(--color-error);
+    border-color: var(--color-error);
+  }
+
+  .status-label {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+    font-style: italic;
+  }
+</style>
