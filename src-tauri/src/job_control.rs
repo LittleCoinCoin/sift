@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -208,12 +209,137 @@ pub fn spawn_job(app: AppHandle, config: JobConfig) -> JobHandle {
 
 // === Orchestrator ===
 
+#[derive(Debug, Clone, PartialEq)]
+enum ProcessOutcome {
+    Processed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum LoopExit {
+    Completed,
+    Cancelled,
+}
+
+fn flush_remaining_abandoned(
+    files: &[FileEntry],
+    outcomes: &Arc<Mutex<Vec<FileOutcome>>>,
+    abandoned_count: &Arc<AtomicU32>,
+) {
+    for remaining in files {
+        outcomes.lock().unwrap().push(FileOutcome {
+            path: remaining.path.clone(),
+            status: FileOutcomeStatus::Abandoned,
+            in_flight: false,
+        });
+        abandoned_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// File-iteration state machine. Pulled out of `run_job` so the pause/cancel
+/// re-queue semantics (spec AC #9, #9b) can be exercised in unit tests with a
+/// fake processor — `run_job` itself remains the production wiring that talks
+/// to `tauri::AppHandle`, `process_receipt`, and the on-disk receipt index.
+async fn run_file_loop<P, Fut, S, A>(
+    files: &[FileEntry],
+    mut ctrl_rx: watch::Receiver<ControlSignal>,
+    processed_count: Arc<AtomicU32>,
+    abandoned_count: Arc<AtomicU32>,
+    failed_count: Arc<AtomicU32>,
+    outcomes: Arc<Mutex<Vec<FileOutcome>>>,
+    mut process: P,
+    mut emit_status: S,
+    mut on_abandon: A,
+) -> LoopExit
+where
+    P: FnMut(usize, FileEntry) -> Fut,
+    Fut: Future<Output = ProcessOutcome>,
+    S: FnMut(JobStatus),
+    A: FnMut(&str),
+{
+    // Mark initial value as seen so ctrl_rx.changed() waits for a real change.
+    drop(ctrl_rx.borrow_and_update());
+
+    let mut idx = 0usize;
+    'file_loop: while idx < files.len() {
+        let file_entry = files[idx].clone();
+        // --- pause/cancel checkpoint ---
+        loop {
+            let sig = ctrl_rx.borrow_and_update().clone();
+            match sig {
+                ControlSignal::Cancel => {
+                    flush_remaining_abandoned(&files[idx..], &outcomes, &abandoned_count);
+                    return LoopExit::Cancelled;
+                }
+                ControlSignal::Pause => {
+                    emit_status(JobStatus::Paused);
+                    if ctrl_rx.changed().await.is_err() {
+                        return LoopExit::Cancelled;
+                    }
+                    let next = ctrl_rx.borrow_and_update().clone();
+                    if next == ControlSignal::Cancel {
+                        flush_remaining_abandoned(&files[idx..], &outcomes, &abandoned_count);
+                        return LoopExit::Cancelled;
+                    }
+                    emit_status(JobStatus::Running);
+                }
+                ControlSignal::Run => break,
+            }
+        }
+
+        let path = file_entry.path.clone();
+
+        tokio::select! {
+            outcome = process(idx, file_entry) => {
+                match outcome {
+                    ProcessOutcome::Processed => {
+                        processed_count.fetch_add(1, Ordering::Relaxed);
+                        outcomes.lock().unwrap().push(FileOutcome {
+                            path: path.clone(),
+                            status: FileOutcomeStatus::Processed,
+                            in_flight: false,
+                        });
+                    }
+                    ProcessOutcome::Failed => {
+                        failed_count.fetch_add(1, Ordering::Relaxed);
+                        outcomes.lock().unwrap().push(FileOutcome {
+                            path: path.clone(),
+                            status: FileOutcomeStatus::Failed,
+                            in_flight: false,
+                        });
+                    }
+                }
+                idx += 1;
+            }
+            _ = ctrl_rx.changed() => {
+                // In-flight file dropped here (cancel-on-drop semantics for reqwest).
+                on_abandon(&path);
+                abandoned_count.fetch_add(1, Ordering::Relaxed);
+                outcomes.lock().unwrap().push(FileOutcome {
+                    path: path.clone(),
+                    status: FileOutcomeStatus::Abandoned,
+                    in_flight: true,
+                });
+                let sig = ctrl_rx.borrow_and_update().clone();
+                if sig == ControlSignal::Cancel {
+                    flush_remaining_abandoned(&files[idx + 1..], &outcomes, &abandoned_count);
+                    return LoopExit::Cancelled;
+                }
+                // Pause: outer loop will wait at checkpoint on next iteration.
+                idx += 1;
+                continue 'file_loop;
+            }
+        }
+    }
+    LoopExit::Completed
+}
+
 async fn run_job(
     app: AppHandle,
     job_id: String,
     config: JobConfig,
     status: Arc<Mutex<JobStatus>>,
-    mut ctrl_rx: watch::Receiver<ControlSignal>,
+    ctrl_rx: watch::Receiver<ControlSignal>,
     processed_count: Arc<AtomicU32>,
     abandoned_count: Arc<AtomicU32>,
     failed_count: Arc<AtomicU32>,
@@ -224,102 +350,65 @@ async fn run_job(
     use crate::scan::ReceiptFile;
 
     let total = config.files.len() as u32;
-    let mut elapsed_sum = 0.0f64;
-
-    // Mark initial value as seen so ctrl_rx.changed() waits for a real change.
-    drop(ctrl_rx.borrow_and_update());
+    let elapsed_sum: Arc<Mutex<f64>> = Arc::new(Mutex::new(0.0));
+    let config = Arc::new(config);
+    let files = config.files.clone();
 
     let _ = app.emit("job_status", JobStatusEvent {
         job_id: job_id.clone(),
         status: JobStatus::Running,
     });
 
-    'file_loop: for (idx, file_entry) in config.files.iter().enumerate() {
-        // --- pause/cancel checkpoint ---
-        loop {
-            let sig = ctrl_rx.borrow_and_update().clone();
-            match sig {
-                ControlSignal::Cancel => {
-                    // Append this and all remaining files as unstarted-abandoned.
-                    for remaining in &config.files[idx..] {
-                        outcomes.lock().unwrap().push(FileOutcome {
-                            path: remaining.path.clone(),
-                            status: FileOutcomeStatus::Abandoned,
-                            in_flight: false,
-                        });
-                        abandoned_count.fetch_add(1, Ordering::Relaxed);
-                    }
-                    emit_terminal_cancelled(&app, &job_id, &status, total, &processed_count, &abandoned_count, &failed_count, &outcomes);
-                    return;
-                }
-                ControlSignal::Pause => {
-                    let _ = app.emit("job_status", JobStatusEvent {
-                        job_id: job_id.clone(),
-                        status: JobStatus::Paused,
-                    });
-                    if ctrl_rx.changed().await.is_err() {
-                        return;
-                    }
-                    let next = ctrl_rx.borrow_and_update().clone();
-                    if next == ControlSignal::Cancel {
-                        // Append this and all remaining files as unstarted-abandoned.
-                        for remaining in &config.files[idx..] {
-                            outcomes.lock().unwrap().push(FileOutcome {
-                                path: remaining.path.clone(),
-                                status: FileOutcomeStatus::Abandoned,
-                                in_flight: false,
-                            });
-                            abandoned_count.fetch_add(1, Ordering::Relaxed);
-                        }
-                        emit_terminal_cancelled(&app, &job_id, &status, total, &processed_count, &abandoned_count, &failed_count, &outcomes);
-                        return;
-                    }
-                    let _ = app.emit("job_status", JobStatusEvent {
-                        job_id: job_id.clone(),
-                        status: JobStatus::Running,
-                    });
-                }
-                ControlSignal::Run => break,
-            }
-        }
+    let process = {
+        let app = app.clone();
+        let config = Arc::clone(&config);
+        let processed_count = Arc::clone(&processed_count);
+        let elapsed_sum = Arc::clone(&elapsed_sum);
+        let job_id = job_id.clone();
+        move |_idx: usize, file: FileEntry| {
+            let app = app.clone();
+            let config = Arc::clone(&config);
+            let processed_count = Arc::clone(&processed_count);
+            let elapsed_sum = Arc::clone(&elapsed_sum);
+            let job_id = job_id.clone();
+            async move {
+                let path = file.path.clone();
+                let receipt_file = match file.file_type.as_str() {
+                    "pdf" => ReceiptFile::Pdf(PathBuf::from(&path)),
+                    _ => ReceiptFile::Image(PathBuf::from(&path)),
+                };
 
-        let path = file_entry.path.clone();
-        let receipt_file = match file_entry.file_type.as_str() {
-            "pdf" => ReceiptFile::Pdf(PathBuf::from(&path)),
-            _ => ReceiptFile::Image(PathBuf::from(&path)),
-        };
+                let done_so_far = processed_count.load(Ordering::Relaxed);
+                let avg_so_far = {
+                    let s = *elapsed_sum.lock().unwrap();
+                    if done_so_far > 0 { s / done_so_far as f64 } else { 0.0 }
+                };
 
-        let done_so_far = processed_count.load(Ordering::Relaxed);
-        let avg_so_far = if done_so_far > 0 { elapsed_sum / done_so_far as f64 } else { 0.0 };
+                let _ = app.emit("progress", ProgressEvent {
+                    done: done_so_far,
+                    total,
+                    avg_ms: avg_so_far,
+                    job_id: Some(job_id.clone()),
+                    status: Some("running".to_string()),
+                    current_file: Some(path.clone()),
+                });
 
-        let _ = app.emit("progress", ProgressEvent {
-            done: done_so_far,
-            total,
-            avg_ms: avg_so_far,
-            job_id: Some(job_id.clone()),
-            status: Some("running".to_string()),
-            current_file: Some(path.clone()),
-        });
+                emit_log(&app, LogLevel::Info, format!("Processing {}", path));
+                let start = std::time::Instant::now();
 
-        emit_log(&app, LogLevel::Info, format!("Processing {}", path));
-
-        let start = std::time::Instant::now();
-
-        tokio::select! {
-            result = crate::receipt::process_receipt(
-                receipt_file,
-                &config.api_url,
-                &config.api_key,
-                &config.ocr_model,
-                &config.extraction_url,
-                &config.extraction_api_key,
-                &config.extraction_model,
-                &config.active_system_prompt,
-                &config.json_schema_keys,
-            ) => {
-                let elapsed_ms = start.elapsed().as_millis() as f64;
-                match result {
+                match crate::receipt::process_receipt(
+                    receipt_file,
+                    &config.api_url,
+                    &config.api_key,
+                    &config.ocr_model,
+                    &config.extraction_url,
+                    &config.extraction_api_key,
+                    &config.extraction_model,
+                    &config.active_system_prompt,
+                    &config.json_schema_keys,
+                ).await {
                     Ok(record) => {
+                        let elapsed_ms = start.elapsed().as_millis() as f64;
                         match load_index(&app).await {
                             Ok(mut index) => {
                                 let entry = index.entry(path.clone()).or_insert_with(|| ReceiptEntry {
@@ -337,64 +426,67 @@ async fn run_job(
                             }
                         }
 
-                        let done = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                        elapsed_sum += elapsed_ms;
-                        let avg_ms = elapsed_sum / done as f64;
-
-                        outcomes.lock().unwrap().push(FileOutcome {
-                            path: path.clone(),
-                            status: FileOutcomeStatus::Processed,
-                            in_flight: false,
-                        });
+                        let new_done = done_so_far + 1;
+                        let new_sum = {
+                            let mut s = elapsed_sum.lock().unwrap();
+                            *s += elapsed_ms;
+                            *s
+                        };
+                        let avg_ms = new_sum / new_done as f64;
 
                         emit_log(&app, LogLevel::Success, format!("Processed {}", path));
                         let _ = app.emit("progress", ProgressEvent {
-                            done,
+                            done: new_done,
                             total,
                             avg_ms,
                             job_id: Some(job_id.clone()),
                             status: Some("running".to_string()),
                             current_file: Some(path.clone()),
                         });
+                        ProcessOutcome::Processed
                     }
                     Err(e) => {
-                        failed_count.fetch_add(1, Ordering::Relaxed);
-                        outcomes.lock().unwrap().push(FileOutcome {
-                            path: path.clone(),
-                            status: FileOutcomeStatus::Failed,
-                            in_flight: false,
-                        });
                         emit_log(&app, LogLevel::Error, format!("Failed to process {}: {}", path, e));
+                        ProcessOutcome::Failed
                     }
                 }
-            }
-            _ = ctrl_rx.changed() => {
-                // In-flight file dropped here (cancel-on-drop semantics for reqwest).
-                emit_log(&app, LogLevel::Warn, format!("Abandoned {} — not persisted to index", path));
-                abandoned_count.fetch_add(1, Ordering::Relaxed);
-                outcomes.lock().unwrap().push(FileOutcome {
-                    path: path.clone(),
-                    status: FileOutcomeStatus::Abandoned,
-                    in_flight: true,
-                });
-                let sig = ctrl_rx.borrow_and_update().clone();
-                if sig == ControlSignal::Cancel {
-                    // Collect all remaining unstarted files (idx+1 onward).
-                    for remaining in &config.files[idx + 1..] {
-                        outcomes.lock().unwrap().push(FileOutcome {
-                            path: remaining.path.clone(),
-                            status: FileOutcomeStatus::Abandoned,
-                            in_flight: false,
-                        });
-                        abandoned_count.fetch_add(1, Ordering::Relaxed);
-                    }
-                    emit_terminal_cancelled(&app, &job_id, &status, total, &processed_count, &abandoned_count, &failed_count, &outcomes);
-                    return;
-                }
-                // Pause: outer loop will wait at checkpoint on next iteration.
-                continue 'file_loop;
             }
         }
+    };
+
+    let emit_status = {
+        let app = app.clone();
+        let job_id = job_id.clone();
+        move |new_status: JobStatus| {
+            let _ = app.emit("job_status", JobStatusEvent {
+                job_id: job_id.clone(),
+                status: new_status,
+            });
+        }
+    };
+
+    let on_abandon = {
+        let app = app.clone();
+        move |path: &str| {
+            emit_log(&app, LogLevel::Warn, format!("Abandoned {} — not persisted to index", path));
+        }
+    };
+
+    let exit = run_file_loop(
+        &files,
+        ctrl_rx,
+        Arc::clone(&processed_count),
+        Arc::clone(&abandoned_count),
+        Arc::clone(&failed_count),
+        Arc::clone(&outcomes),
+        process,
+        emit_status,
+        on_abandon,
+    ).await;
+
+    if exit == LoopExit::Cancelled {
+        emit_terminal_cancelled(&app, &job_id, &status, total, &processed_count, &abandoned_count, &failed_count, &outcomes);
+        return;
     }
 
     // All files iterated — determine final status.
@@ -407,7 +499,8 @@ async fn run_job(
     };
     *status.lock().unwrap() = final_status.clone();
 
-    let avg_ms = if processed > 0 { elapsed_sum / processed as f64 } else { 0.0 };
+    let elapsed_total = *elapsed_sum.lock().unwrap();
+    let avg_ms = if processed > 0 { elapsed_total / processed as f64 } else { 0.0 };
     let completion_status_str = match &final_status {
         JobStatus::Failed => "failed",
         _ => "completed",
@@ -462,4 +555,114 @@ fn emit_terminal_cancelled(
         status: JobStatus::Cancelled,
     });
     let _ = app.emit("job_cancelled", &summary);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    fn fe(path: &str) -> FileEntry {
+        FileEntry { path: path.to_string(), file_type: "image".into() }
+    }
+
+    /// Spec AC #9 / #9b: pausing during in-flight processing must NOT advance
+    /// the file index. On resume, the same file is re-processed from scratch.
+    #[tokio::test]
+    async fn pause_then_resume_reprocesses_inflight_file() {
+        let files = vec![fe("A"), fe("B")];
+        let (ctrl_tx, ctrl_rx) = watch::channel(ControlSignal::Run);
+
+        let processed = Arc::new(AtomicU32::new(0));
+        let abandoned = Arc::new(AtomicU32::new(0));
+        let failed = Arc::new(AtomicU32::new(0));
+        let outcomes: Arc<Mutex<Vec<FileOutcome>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // Records every (path) entry into the processor. With the bug, A is
+        // attempted only once before being skipped; with the fix, A is
+        // attempted twice (once dropped on pause, once on resume).
+        let attempts: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        // Notifies when the first attempt at A is in flight, so the test can
+        // send Pause at a deterministic moment.
+        let inflight = Arc::new(Notify::new());
+
+        let process = {
+            let attempts = Arc::clone(&attempts);
+            let inflight = Arc::clone(&inflight);
+            move |_idx: usize, file: FileEntry| {
+                let attempts = Arc::clone(&attempts);
+                let inflight = Arc::clone(&inflight);
+                async move {
+                    let path = file.path.clone();
+                    let attempt_n = {
+                        let mut a = attempts.lock().unwrap();
+                        a.push(path.clone());
+                        a.iter().filter(|p| p.as_str() == path.as_str()).count()
+                    };
+                    if path == "A" && attempt_n == 1 {
+                        // First attempt at A: signal then hang so the pause
+                        // path drops us via cancel-on-drop semantics.
+                        inflight.notify_one();
+                        std::future::pending::<()>().await;
+                        unreachable!()
+                    }
+                    ProcessOutcome::Processed
+                }
+            }
+        };
+        let emit_status = |_s: JobStatus| {};
+        let on_abandon = |_p: &str| {};
+
+        let loop_fut = run_file_loop(
+            &files,
+            ctrl_rx,
+            Arc::clone(&processed),
+            Arc::clone(&abandoned),
+            Arc::clone(&failed),
+            Arc::clone(&outcomes),
+            process,
+            emit_status,
+            on_abandon,
+        );
+        tokio::pin!(loop_fut);
+
+        // Drive the loop until A enters the processor.
+        tokio::select! {
+            _ = inflight.notified() => {}
+            _ = &mut loop_fut => panic!("loop ended before A entered processing"),
+        }
+
+        // Pause while A is in flight; drive the loop until A is recorded as
+        // abandoned (in_flight=true), which means the loop has reached the
+        // pause checkpoint and is awaiting Run.
+        ctrl_tx.send(ControlSignal::Pause).unwrap();
+        loop {
+            if outcomes.lock().unwrap().iter().any(|o| o.in_flight) { break; }
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+                _ = &mut loop_fut => panic!("loop ended during pause"),
+            }
+        }
+
+        // Resume; the loop should re-process A from scratch, then process B.
+        ctrl_tx.send(ControlSignal::Run).unwrap();
+        let exit = loop_fut.await;
+        assert_eq!(exit, LoopExit::Completed);
+
+        let attempts = attempts.lock().unwrap().clone();
+        let a_count = attempts.iter().filter(|p| p.as_str() == "A").count();
+        assert!(
+            a_count >= 2,
+            "expected A to be re-attempted after resume; attempts = {:?}",
+            attempts
+        );
+        assert!(
+            attempts.contains(&"B".to_string()),
+            "expected B to be processed; attempts = {:?}",
+            attempts
+        );
+        assert_eq!(processed.load(Ordering::Relaxed), 2);
+    }
 }
