@@ -9,14 +9,70 @@
   function basename(path: string): string {
     return path.split(/[\\/]/).pop() ?? path;
   }
+
+  let modalEl: HTMLElement | null = $state(null);
+
+  $effect(() => {
+    if (!job.cancelSummaryOpen || !modalEl) return;
+
+    const previousFocus = document.activeElement as HTMLElement | null;
+
+    const focusables = (): HTMLElement[] =>
+      Array.from(
+        modalEl!.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => !el.hasAttribute('disabled'));
+
+    focusables()[0]?.focus();
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        job.dismissCancelSummary();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const els = focusables();
+        if (els.length === 0) return;
+        const first = els[0];
+        const last = els[els.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  });
 </script>
 
 {#if job.cancelSummaryOpen && job.cancelSummary}
   {@const s = job.cancelSummary}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="backdrop" onclick={job.dismissCancelSummary.bind(job)}>
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="modal" role="dialog" aria-modal="true" aria-label="Cancellation summary" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+    <div
+      bind:this={modalEl}
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Cancellation summary"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+    >
       <div class="modal-header">
         <span class="modal-title">Job Cancelled</span>
         <button class="close-btn" onclick={job.dismissCancelSummary.bind(job)} aria-label="Close">×</button>
