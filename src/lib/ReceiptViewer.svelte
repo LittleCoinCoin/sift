@@ -236,7 +236,19 @@
   const isTransformed = $derived(zoom !== 1 || panX !== 0 || panY !== 0);
   const isProcessing = $derived(job.isActive);
   const record = $derived(receipts.selectedFile);
-  const processedCount = $derived(receipts.files.filter(f => f.status === 'Processed').length);
+
+  // AC #3/#4: no selection → counts across all files
+  // AC #5: selection active → Process = all selected; Export = selected ∩ Processed
+  const processCount = $derived(
+    receipts.selectedPaths.size > 0
+      ? receipts.selectedPaths.size
+      : receipts.files.filter(f => f.status !== 'Processed').length
+  );
+  const exportCount = $derived(
+    receipts.selectedPaths.size > 0
+      ? receipts.files.filter(f => receipts.selectedPaths.has(f.source_path) && f.status === 'Processed').length
+      : receipts.files.filter(f => f.status === 'Processed').length
+  );
 
   // Context menu
   let contextMenu = $state<{ x: number; y: number; paths: string[] } | null>(null);
@@ -300,9 +312,26 @@
       <button
         class="btn-process"
         onclick={processSelected}
-        disabled={receipts.selectedPaths.size === 0 || isProcessing}
+        disabled={processCount === 0 || isProcessing}
+        title={isProcessing
+          ? undefined
+          : processCount === 0
+            ? (receipts.selectedPaths.size > 0 ? 'No files selected' : 'No unprocessed files')
+            : undefined}
+        aria-label={isProcessing ? 'Processing…' : `Process ${processCount} file${processCount !== 1 ? 's' : ''}`}
       >
-        {isProcessing ? 'Processing…' : 'Process'}
+        {isProcessing ? 'Processing…' : `Process (${processCount})`}
+      </button>
+      <button
+        class="btn-export"
+        onclick={exportCsv}
+        disabled={exporting || exportCount === 0}
+        title={exportCount === 0
+          ? (receipts.selectedPaths.size > 0 ? 'None of the selected files are processed' : 'No processed files to export')
+          : undefined}
+        aria-label={exporting ? 'Exporting…' : `Export ${exportCount} processed file${exportCount !== 1 ? 's' : ''} to CSV`}
+      >
+        {exporting ? 'Exporting…' : `Export CSV (${exportCount})`}
       </button>
     </div>
   </aside>
@@ -351,16 +380,6 @@
   <div class="fields-pane">
     <div class="fields-header">
       <h2>Receipt Details</h2>
-      <div class="fields-actions">
-        <button
-          class="btn-export"
-          onclick={exportCsv}
-          disabled={exporting || processedCount === 0}
-          title="Export all processed receipts to CSV"
-        >
-          {exporting ? 'Exporting…' : 'Export CSV'}
-        </button>
-      </div>
     </div>
 
     <div class="fields-body">
@@ -471,6 +490,8 @@
 
   .panel-footer {
     flex-shrink: 0;
+    display: flex;
+    gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     border-top: 1px solid var(--color-border);
   }
@@ -540,9 +561,6 @@
   }
 
   .fields-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     padding: var(--space-4);
     border-bottom: 1px solid var(--color-border);
     flex-shrink: 0;
@@ -555,14 +573,10 @@
     margin: 0;
   }
 
-  .fields-actions {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-  }
-
   .btn-export {
-    padding: var(--space-2) var(--space-3);
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-2) var(--space-4);
     background: none;
     color: var(--color-text-muted);
     border: 1px solid var(--color-border);
@@ -570,13 +584,21 @@
     cursor: pointer;
     font-size: var(--font-size-sm);
     font-weight: 500;
-    transition: color var(--duration-fast), border-color var(--duration-fast);
     white-space: nowrap;
+    transition: background var(--duration-fast) var(--easing-default),
+                color var(--duration-fast) var(--easing-default),
+                border-color var(--duration-fast) var(--easing-default);
   }
 
   .btn-export:hover:not(:disabled) {
+    background: var(--color-surface-raised);
     color: var(--color-text);
     border-color: var(--color-text-muted);
+  }
+
+  .btn-export:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .btn-export:disabled {
@@ -585,17 +607,20 @@
   }
 
   .btn-process {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: var(--space-2) var(--space-4);
     background: var(--color-primary);
-    color: #fff;
+    color: #fff; /* gap: --color-on-primary */
     border: none;
     border-radius: var(--radius-md);
     cursor: pointer;
     font-size: var(--font-size-sm);
     font-weight: 500;
-    transition: background var(--duration-fast) var(--easing-default);
     white-space: nowrap;
+    transition: background var(--duration-fast) var(--easing-default),
+                color var(--duration-fast) var(--easing-default),
+                border-color var(--duration-fast) var(--easing-default);
   }
 
   .btn-process:focus-visible {
