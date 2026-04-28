@@ -52,11 +52,15 @@ let _initialized = false;
 class JobStore {
   status = $state<JobStatus>('idle');
   cancelSummary = $state<JobSummary | null>(null);
-  cancelSummaryOpen = $state(false);
+  cancelModalMode = $state<'confirm' | 'summary' | null>(null);
   private _jobId: string | null = null;
 
   get isActive(): boolean {
     return ACTIVE_STATUSES.has(this.status);
+  }
+
+  get cancelSummaryOpen(): boolean {
+    return this.cancelModalMode !== null;
   }
 
   async start(config: JobConfig) {
@@ -83,15 +87,36 @@ class JobStore {
     // job_status: cancelling is emitted immediately by handle.
   }
 
+  // Pause the job and open the cancel-confirmation modal.
+  async requestCancel() {
+    if (!this._jobId) return;
+    if (this.status === 'running' || this.status === 'resuming') {
+      await this.pause();
+    }
+    this.cancelModalMode = 'confirm';
+  }
+
+  // Confirmed from the confirm modal — close modal and send cancel to backend.
+  async confirmCancel() {
+    this.cancelModalMode = null;
+    await this.cancel();
+  }
+
+  // Dismissed from the confirm modal — close modal and resume the job.
+  async dismissCancelConfirm() {
+    this.cancelModalMode = null;
+    await this.resume();
+  }
+
   reset() {
     this.status = 'idle';
     this._jobId = null;
     this.cancelSummary = null;
-    this.cancelSummaryOpen = false;
+    this.cancelModalMode = null;
   }
 
   dismissCancelSummary() {
-    this.cancelSummaryOpen = false;
+    this.cancelModalMode = null;
     this.cancelSummary = null;
   }
 }
@@ -125,6 +150,6 @@ export async function initJobStore() {
   await listen<JobSummary>('job_cancelled', ({ payload }) => {
     job.status = 'cancelled';
     job.cancelSummary = payload;
-    job.cancelSummaryOpen = true;
+    job.cancelModalMode = 'summary';
   });
 }
