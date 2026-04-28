@@ -94,4 +94,8 @@
     from { transform: translateX(calc(100% + var(--space-4))); opacity: 0; }
     to   { transform: translateX(0); opacity: 1; }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast { animation: none; }
+  }
 </style>
