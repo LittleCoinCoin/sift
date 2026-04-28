@@ -98,25 +98,16 @@ pub fn extract_json(s: &str) -> String {
     s[start..=end].to_string()
 }
 
-pub async fn process_receipt(
+/// Phase 1: send the file image to the OCR model and return the raw transcript.
+pub async fn ocr_receipt(
     file: ReceiptFile,
     api_url: &str,
     api_key: &str,
     ocr_model: &str,
-    extraction_url: &str,
-    extraction_api_key: &str,
-    extraction_model: &str,
-    active_system_prompt: &str,
-    json_schema_keys: &[String],
-) -> Result<ReceiptRecord> {
-    // Validate URLs before attempting to build requests
+) -> Result<(String, String)> {
     validate_url(api_url, "OCR")?;
-    validate_url(extraction_url, "Text Processing")?;
 
-    let source_path = file
-        .path()
-        .to_string_lossy()
-        .to_string();
+    let source_path = file.path().to_string_lossy().to_string();
 
     let (png_bytes, mime) = match &file {
         ReceiptFile::Image(path) => {
@@ -151,12 +142,8 @@ pub async fn process_receipt(
         }],
     };
 
-    let ocr_chat_url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
-    let extraction_chat_url = format!(
-        "{}/chat/completions",
-        extraction_url.trim_end_matches('/')
-    );
     let client = Client::new();
+    let ocr_chat_url = format!("{}/chat/completions", api_url.trim_end_matches('/'));
 
     let ocr_response = client
         .post(&ocr_chat_url)
@@ -180,12 +167,26 @@ pub async fn process_receipt(
         .message
         .content;
 
+    Ok((source_path, markdown))
+}
+
+/// Phase 2: send the OCR transcript to the extraction model and return parsed fields.
+pub async fn extract_fields(
+    markdown: String,
+    source_path: String,
+    extraction_url: &str,
+    extraction_api_key: &str,
+    extraction_model: &str,
+    active_system_prompt: &str,
+    json_schema_keys: &[String],
+) -> Result<ReceiptRecord> {
+    validate_url(extraction_url, "Text Processing")?;
+
     let key_list: Vec<String> = json_schema_keys
         .iter()
         .map(|c| format!("\"{c}\": \"...\""))
         .collect();
     let schema_keys_preview = key_list.join(", ");
-
     let system_prompt = active_system_prompt.replace(SCHEMA_KEYS_PLACEHOLDER, &schema_keys_preview);
 
     let extraction_request = ChatRequest {
@@ -205,6 +206,12 @@ pub async fn process_receipt(
             },
         ],
     };
+
+    let client = Client::new();
+    let extraction_chat_url = format!(
+        "{}/chat/completions",
+        extraction_url.trim_end_matches('/')
+    );
 
     let extraction_response = client
         .post(&extraction_chat_url)
@@ -246,6 +253,36 @@ pub async fn process_receipt(
     }
 
     Ok(ReceiptRecord { source_path, fields })
+}
+
+/// Convenience wrapper: validates both URLs upfront, then runs OCR → extraction
+/// in sequence. Used by integration tests and any caller that does not need
+/// per-phase progress events.
+pub async fn process_receipt(
+    file: ReceiptFile,
+    api_url: &str,
+    api_key: &str,
+    ocr_model: &str,
+    extraction_url: &str,
+    extraction_api_key: &str,
+    extraction_model: &str,
+    active_system_prompt: &str,
+    json_schema_keys: &[String],
+) -> Result<ReceiptRecord> {
+    validate_url(api_url, "OCR")?;
+    validate_url(extraction_url, "Text Processing")?;
+    let (source_path, markdown) =
+        ocr_receipt(file, api_url, api_key, ocr_model).await?;
+    extract_fields(
+        markdown,
+        source_path,
+        extraction_url,
+        extraction_api_key,
+        extraction_model,
+        active_system_prompt,
+        json_schema_keys,
+    )
+    .await
 }
 
 fn image_mime(ext: &str) -> &'static str {

@@ -413,11 +413,37 @@ async fn run_job(
                 emit_log(&app, LogLevel::Info, format!("Processing {}", path));
                 let start = std::time::Instant::now();
 
-                match crate::receipt::process_receipt(
+                // Phase 1: OCR
+                let (source_path, markdown) = match crate::receipt::ocr_receipt(
                     receipt_file,
                     &config.api_url,
                     &config.api_key,
                     &config.ocr_model,
+                ).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        emit_log(&app, LogLevel::Error, format!("Failed to OCR {}: {}", path, e));
+                        return ProcessOutcome::Failed;
+                    }
+                };
+
+                // Phase 2: emit before the extraction call so the icon reflects
+                // what is actually in-flight (done count unchanged — file not yet complete).
+                let _ = app.emit("progress", ProgressEvent {
+                    done: done_so_far,
+                    total,
+                    avg_ms: avg_so_far,
+                    job_id: Some(job_id.clone()),
+                    status: Some("running".to_string()),
+                    current_file: Some(path.clone()),
+                    phase: Some(Phase::Extract),
+                    file_started_at: Some(file_started_at),
+                    job_started_at: Some(job_started_at),
+                });
+
+                match crate::receipt::extract_fields(
+                    markdown,
+                    source_path,
                     &config.extraction_url,
                     &config.extraction_api_key,
                     &config.extraction_model,
@@ -452,21 +478,22 @@ async fn run_job(
                         let avg_ms = new_sum / new_done as f64;
 
                         emit_log(&app, LogLevel::Success, format!("Processed {}", path));
+                        // File is complete — no phase or current_file on this event.
                         let _ = app.emit("progress", ProgressEvent {
                             done: new_done,
                             total,
                             avg_ms,
                             job_id: Some(job_id.clone()),
                             status: Some("running".to_string()),
-                            current_file: Some(path.clone()),
-                            phase: Some(Phase::Extract),
-                            file_started_at: Some(file_started_at),
+                            current_file: None,
+                            phase: None,
+                            file_started_at: None,
                             job_started_at: Some(job_started_at),
                         });
                         ProcessOutcome::Processed
                     }
                     Err(e) => {
-                        emit_log(&app, LogLevel::Error, format!("Failed to process {}: {}", path, e));
+                        emit_log(&app, LogLevel::Error, format!("Failed to extract {}: {}", path, e));
                         ProcessOutcome::Failed
                     }
                 }
