@@ -59,7 +59,11 @@
               </svg>
             </span>
           {/if}
-          <span class="file-name" title={p?.current_file ?? undefined}>
+          <span
+            class="file-name"
+            class:file-name--active={job.status === 'running' && !!currentFile}
+            title={p?.current_file ?? undefined}
+          >
             {#if currentFile}
               {currentFile}
             {:else if isCancelling}
@@ -234,5 +238,32 @@
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
     font-style: italic;
+  }
+
+  @keyframes filename-shimmer {
+    from { background-position: 200%; }
+    to { background-position: -200%; }
+  }
+
+  .file-name--active {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--color-primary) 40%, transparent) 40%,
+      color-mix(in srgb, var(--color-primary) 60%, transparent) 50%,
+      color-mix(in srgb, var(--color-primary) 40%, transparent) 60%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    background-position: 200%;
+    animation: filename-shimmer 2s var(--easing-default) infinite; /* gap: --duration-shimmer */
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .file-name--active {
+      animation: none;
+      background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+      background-size: 100%;
+    }
   }
 </style>
