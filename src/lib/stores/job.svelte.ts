@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { showToast, registerJobActiveCheck } from './log';
+import { get } from 'svelte/store';
+import { showToast, registerJobActiveCheck, progress } from './log';
 
 // Lowercase to match Rust's serde(rename_all = "snake_case")
 export type JobStatus =
@@ -17,6 +18,8 @@ export interface ProgressEvent {
   status?: string;
   current_file?: string;
   phase?: Phase;
+  file_started_at?: number;
+  job_started_at?: number;
 }
 
 export type FileOutcomeStatus = 'processed' | 'abandoned' | 'failed';
@@ -64,20 +67,18 @@ let _initialized = false;
 class JobStore {
   status = $state<JobStatus>('idle');
   cancelSummary = $state<JobSummary | null>(null);
-  cancelModalMode = $state<'confirm' | 'summary' | null>(null);
+  cancelOpen = $state(false);
   private _jobId: string | null = null;
+  private _files: FileEntry[] = [];
 
   get isActive(): boolean {
     return ACTIVE_STATUSES.has(this.status);
   }
 
-  get cancelSummaryOpen(): boolean {
-    return this.cancelModalMode !== null;
-  }
-
   async start(config: JobConfig) {
     const jobId = await invoke<string>('start_job', { config });
     this._jobId = jobId;
+    this._files = config.files;
     this.status = 'running';
   }
 
@@ -99,37 +100,56 @@ class JobStore {
     // job_status: cancelling is emitted immediately by handle.
   }
 
-  // Pause the job and open the cancel-confirmation modal.
+  // Pause the job, build a predicted cancellation summary, and open the cancel modal.
   async requestCancel() {
     if (!this._jobId) return;
     if (this.status === 'running' || this.status === 'resuming') {
       await this.pause();
     }
-    this.cancelModalMode = 'confirm';
+
+    const p = get(progress);
+    const done = p?.done ?? 0;
+    const total = p?.total ?? this._files.length;
+    const currentFile = p?.current_file;
+
+    const processedPaths = new Set(this._files.slice(0, done).map(f => f.path));
+    const files: FileOutcome[] = this._files.map(f => {
+      if (processedPaths.has(f.path)) return { path: f.path, status: 'processed', in_flight: false };
+      if (f.path === currentFile)     return { path: f.path, status: 'abandoned', in_flight: true };
+      return { path: f.path, status: 'abandoned', in_flight: false };
+    });
+
+    const abandoned = files.filter(f => f.status === 'abandoned').length;
+    this.cancelSummary = {
+      job_id: this._jobId,
+      status: 'cancelled',
+      total,
+      processed: done,
+      abandoned,
+      failed: 0,
+      files,
+    };
+    this.cancelOpen = true;
   }
 
-  // Confirmed from the confirm modal — close modal and send cancel to backend.
+  // Confirmed from the cancel modal — close modal and send cancel to backend.
   async confirmCancel() {
-    this.cancelModalMode = null;
+    this.cancelOpen = false;
     await this.cancel();
   }
 
-  // Dismissed from the confirm modal — close modal and resume the job.
+  // Dismissed from the cancel modal — close modal and resume the job.
   async dismissCancelConfirm() {
-    this.cancelModalMode = null;
+    this.cancelOpen = false;
     await this.resume();
   }
 
   reset() {
     this.status = 'idle';
     this._jobId = null;
+    this._files = [];
     this.cancelSummary = null;
-    this.cancelModalMode = null;
-  }
-
-  dismissCancelSummary() {
-    this.cancelModalMode = null;
-    this.cancelSummary = null;
+    this.cancelOpen = false;
   }
 }
 
@@ -158,10 +178,8 @@ export async function initJobStore() {
     showToast(payload.failed > 0 ? 'warn' : 'success', msg);
   });
 
-  // Fired when job is cancelled — open cancel summary modal instead of toast (Visual Spec §7)
+  // Fired when job is cancelled — update status only; modal was already shown predictively on requestCancel.
   await listen<JobSummary>('job_cancelled', ({ payload }) => {
-    job.status = 'cancelled';
-    job.cancelSummary = payload;
-    job.cancelModalMode = 'summary';
+    job.status = payload.status;
   });
 }

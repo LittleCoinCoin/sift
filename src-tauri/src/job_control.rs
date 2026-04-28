@@ -358,6 +358,11 @@ async fn run_job(
     let config = Arc::new(config);
     let files = config.files.clone();
 
+    let job_started_at: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
     let _ = app.emit("job_status", JobStatusEvent {
         job_id: job_id.clone(),
         status: JobStatus::Running,
@@ -376,6 +381,11 @@ async fn run_job(
             let elapsed_sum = Arc::clone(&elapsed_sum);
             let job_id = job_id.clone();
             async move {
+                let file_started_at: u64 = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
                 let path = file.path.clone();
                 let receipt_file = match file.file_type.as_str() {
                     "pdf" => ReceiptFile::Pdf(PathBuf::from(&path)),
@@ -396,6 +406,8 @@ async fn run_job(
                     status: Some("running".to_string()),
                     current_file: Some(path.clone()),
                     phase: Some(Phase::Ocr),
+                    file_started_at: Some(file_started_at),
+                    job_started_at: Some(job_started_at),
                 });
 
                 emit_log(&app, LogLevel::Info, format!("Processing {}", path));
@@ -448,6 +460,8 @@ async fn run_job(
                             status: Some("running".to_string()),
                             current_file: Some(path.clone()),
                             phase: Some(Phase::Extract),
+                            file_started_at: Some(file_started_at),
+                            job_started_at: Some(job_started_at),
                         });
                         ProcessOutcome::Processed
                     }
@@ -519,6 +533,8 @@ async fn run_job(
         status: Some(completion_status_str.to_string()),
         current_file: None,
         phase: None,
+        file_started_at: None,
+        job_started_at: None,
     });
 
     let summary = JobSummary {
