@@ -181,6 +181,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    position: relative;
   }
 
   .counts {
@@ -289,30 +290,35 @@
     font-style: italic;
   }
 
-  @keyframes filename-shimmer {
-    from { background-position: 200%; }
-    to { background-position: -200%; }
+  @keyframes filename-underline-sweep {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(100%); }
   }
 
-  .file-name--active {
+  .file-name--active::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
     background: linear-gradient(
       90deg,
       transparent 0%,
-      color-mix(in srgb, var(--color-primary) 40%, transparent) 40%,
-      color-mix(in srgb, var(--color-primary) 60%, transparent) 50%,
-      color-mix(in srgb, var(--color-primary) 40%, transparent) 60%,
+      color-mix(in srgb, var(--color-primary) 40%, transparent) 20%,
+      color-mix(in srgb, var(--color-primary) 80%, transparent) 50%,
+      color-mix(in srgb, var(--color-primary) 40%, transparent) 80%,
       transparent 100%
     );
-    background-size: 200% 100%;
-    background-position: 200%;
-    animation: filename-shimmer 2s var(--easing-default) infinite; /* gap: --duration-shimmer */
+    animation: filename-underline-sweep 2s linear infinite;
+    pointer-events: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .file-name--active {
+    .file-name--active::before {
       animation: none;
-      background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-      background-size: 100%;
+      transform: none;
+      background: color-mix(in srgb, var(--color-primary) 55%, transparent);
     }
   }
 </style>
