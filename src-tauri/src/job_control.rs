@@ -313,20 +313,24 @@ where
             }
             _ = ctrl_rx.changed() => {
                 // In-flight file dropped here (cancel-on-drop semantics for reqwest).
-                on_abandon(&path);
-                abandoned_count.fetch_add(1, Ordering::Relaxed);
-                outcomes.lock().unwrap().push(FileOutcome {
-                    path: path.clone(),
-                    status: FileOutcomeStatus::Abandoned,
-                    in_flight: true,
-                });
                 let sig = ctrl_rx.borrow_and_update().clone();
                 if sig == ControlSignal::Cancel {
+                    // Cancel mid-file: record this file as abandoned-in-flight,
+                    // then drain remaining files as unstarted abandoned.
+                    on_abandon(&path);
+                    abandoned_count.fetch_add(1, Ordering::Relaxed);
+                    outcomes.lock().unwrap().push(FileOutcome {
+                        path: path.clone(),
+                        status: FileOutcomeStatus::Abandoned,
+                        in_flight: true,
+                    });
                     flush_remaining_abandoned(&files[idx + 1..], &outcomes, &abandoned_count);
                     return LoopExit::Cancelled;
                 }
-                // Pause: outer loop will wait at checkpoint on next iteration.
-                idx += 1;
+                // Pause (or Pause→Run race): re-queue the same file from
+                // scratch on resume. Spec AC #9, #9b: the file index must NOT
+                // advance, and no abandoned outcome is recorded since the
+                // file will be retried.
                 continue 'file_loop;
             }
         }
@@ -612,7 +616,15 @@ mod tests {
                 }
             }
         };
-        let emit_status = |_s: JobStatus| {};
+        let paused_emits = Arc::new(AtomicU32::new(0));
+        let emit_status = {
+            let paused_emits = Arc::clone(&paused_emits);
+            move |s: JobStatus| {
+                if s == JobStatus::Paused {
+                    paused_emits.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        };
         let on_abandon = |_p: &str| {};
 
         let loop_fut = run_file_loop(
@@ -634,12 +646,12 @@ mod tests {
             _ = &mut loop_fut => panic!("loop ended before A entered processing"),
         }
 
-        // Pause while A is in flight; drive the loop until A is recorded as
-        // abandoned (in_flight=true), which means the loop has reached the
-        // pause checkpoint and is awaiting Run.
+        // Pause while A is in flight; drive the loop until it reaches the
+        // pause checkpoint (signalled by emit_status(Paused)) and is awaiting
+        // Run.
         ctrl_tx.send(ControlSignal::Pause).unwrap();
         loop {
-            if outcomes.lock().unwrap().iter().any(|o| o.in_flight) { break; }
+            if paused_emits.load(Ordering::Relaxed) > 0 { break; }
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(5)) => {}
                 _ = &mut loop_fut => panic!("loop ended during pause"),
