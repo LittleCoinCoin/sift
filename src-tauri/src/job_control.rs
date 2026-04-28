@@ -349,7 +349,7 @@ async fn run_job(
     failed_count: Arc<AtomicU32>,
     outcomes: Arc<Mutex<Vec<FileOutcome>>>,
 ) {
-    use crate::logger::{emit_log, LogLevel, ProgressEvent};
+    use crate::logger::{emit_log, LogLevel, Phase, ProgressEvent};
     use crate::receipt_index::{load_index, save_index, ProcessingStatus, ReceiptEntry};
     use crate::scan::ReceiptFile;
 
@@ -395,6 +395,7 @@ async fn run_job(
                     job_id: Some(job_id.clone()),
                     status: Some("running".to_string()),
                     current_file: Some(path.clone()),
+                    phase: Some(Phase::Ocr),
                 });
 
                 emit_log(&app, LogLevel::Info, format!("Processing {}", path));
@@ -446,6 +447,7 @@ async fn run_job(
                             job_id: Some(job_id.clone()),
                             status: Some("running".to_string()),
                             current_file: Some(path.clone()),
+                            phase: Some(Phase::Extract),
                         });
                         ProcessOutcome::Processed
                     }
@@ -516,6 +518,7 @@ async fn run_job(
         job_id: Some(job_id.clone()),
         status: Some(completion_status_str.to_string()),
         current_file: None,
+        phase: None,
     });
 
     let summary = JobSummary {

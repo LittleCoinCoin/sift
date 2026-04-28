@@ -7,6 +7,18 @@ export type JobStatus =
   | 'idle' | 'running' | 'paused' | 'resuming'
   | 'cancelling' | 'cancelled' | 'completed' | 'failed';
 
+export type Phase = 'ocr' | 'extract';
+
+export interface ProgressEvent {
+  done: number;
+  total: number;
+  avg_ms: number;
+  job_id?: string;
+  status?: string;
+  current_file?: string;
+  phase?: Phase;
+}
+
 export type FileOutcomeStatus = 'processed' | 'abandoned' | 'failed';
 
 export interface FileOutcome {

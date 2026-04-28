@@ -18,6 +18,13 @@ pub struct LogEvent {
     pub timestamp: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    Ocr,
+    Extract,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProgressEvent {
     pub done: u32,
@@ -29,6 +36,8 @@ pub struct ProgressEvent {
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<Phase>,
 }
 
 pub fn emit_log(app: &AppHandle, level: LogLevel, message: impl Into<String>) {
