@@ -1,6 +1,5 @@
 <script lang="ts">
   import { job } from './stores/job.svelte';
-  import { progress } from './stores/log';
   import type { FileOutcomeStatus } from './stores/job.svelte';
 
   function statusLabel(s: FileOutcomeStatus): string {
@@ -12,18 +11,9 @@
   }
 
   let modalEl: HTMLElement | null = $state(null);
-  const p = $derived($progress);
-
-  function handleClose() {
-    if (job.cancelModalMode === 'confirm') {
-      job.dismissCancelConfirm();
-    } else {
-      job.dismissCancelSummary();
-    }
-  }
 
   $effect(() => {
-    if (!job.cancelSummaryOpen || !modalEl) return;
+    if (!job.cancelOpen || !modalEl) return;
 
     const previousFocus = document.activeElement as HTMLElement | null;
 
@@ -39,7 +29,7 @@
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
-        handleClose();
+        job.dismissCancelConfirm();
         return;
       }
       if (e.key === 'Tab') {
@@ -70,42 +60,25 @@
   });
 </script>
 
-{#if job.cancelSummaryOpen}
+{#if job.cancelOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="backdrop" onclick={handleClose}>
+  <div class="backdrop" onclick={() => job.dismissCancelConfirm()}>
     <div
       bind:this={modalEl}
       class="modal"
       role="dialog"
       aria-modal="true"
-      aria-label={job.cancelModalMode === 'confirm' ? 'Cancel job confirmation' : 'Cancellation summary'}
+      aria-label="Cancel job confirmation"
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
     >
-      {#if job.cancelModalMode === 'confirm'}
-        <div class="modal-header">
-          <span class="modal-title">Cancel Job?</span>
-          <button class="close-btn" onclick={handleClose} aria-label="Close">×</button>
-        </div>
+      <div class="modal-header">
+        <span class="modal-title">Cancel Job?</span>
+        <button class="close-btn" onclick={() => job.dismissCancelConfirm()} aria-label="Close">×</button>
+      </div>
 
-        <div class="stats-row">
-          <span class="stat stat--processed">{p?.done ?? 0} processed</span>
-          <span class="stat-sep">·</span>
-          <span class="stat stat--abandoned">{(p?.total ?? 0) - (p?.done ?? 0)} remaining</span>
-          <span class="stat-total">of {p?.total ?? 0}</span>
-        </div>
-
-        <div class="modal-footer modal-footer--split">
-          <button class="dismiss-btn dismiss-btn--secondary" onclick={() => job.dismissCancelConfirm()}>Resume</button>
-          <button class="dismiss-btn dismiss-btn--danger" onclick={() => job.confirmCancel()}>Confirm Cancel</button>
-        </div>
-      {:else if job.cancelModalMode === 'summary' && job.cancelSummary}
+      {#if job.cancelSummary}
         {@const s = job.cancelSummary}
-        <div class="modal-header">
-          <span class="modal-title">Job Cancelled</span>
-          <button class="close-btn" onclick={handleClose} aria-label="Close">×</button>
-        </div>
-
         <div class="stats-row">
           <span class="stat stat--processed">{s.processed} processed</span>
           <span class="stat-sep">·</span>
@@ -118,7 +91,7 @@
         </div>
 
         {#if s.files.length > 0}
-          <ul class="file-list" aria-label="File outcomes">
+          <ul class="file-list" aria-label="Predicted file outcomes">
             {#each s.files as f (f.path)}
               <li class="file-row file-row--{f.status}">
                 <span class="file-badge">{statusLabel(f.status)}</span>
@@ -130,11 +103,12 @@
             {/each}
           </ul>
         {/if}
-
-        <div class="modal-footer">
-          <button class="dismiss-btn" onclick={handleClose}>Dismiss</button>
-        </div>
       {/if}
+
+      <div class="modal-footer modal-footer--split">
+        <button class="dismiss-btn dismiss-btn--secondary" onclick={() => job.dismissCancelConfirm()}>Dismiss</button>
+        <button class="dismiss-btn dismiss-btn--danger" onclick={() => job.confirmCancel()}>Confirm Cancel</button>
+      </div>
     </div>
   </div>
 {/if}
