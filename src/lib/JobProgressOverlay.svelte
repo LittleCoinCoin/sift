@@ -27,10 +27,27 @@
   );
 
   let now = $state(Date.now());
+  let pauseStartedAt = $state<number | null>(null);
+  let totalPauseShiftMs = $state(0);
+
   $effect(() => {
-    if (!job.isActive) return;
+    if (job.status !== 'running' && job.status !== 'resuming') return;
     const id = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(id);
+  });
+
+  $effect(() => {
+    const s = job.status;
+    if (s === 'paused' && pauseStartedAt == null) {
+      pauseStartedAt = Date.now();
+    } else if (s !== 'paused' && pauseStartedAt != null) {
+      totalPauseShiftMs += Date.now() - pauseStartedAt;
+      pauseStartedAt = null;
+      now = Date.now();
+    } else if (s === 'idle') {
+      pauseStartedAt = null;
+      totalPauseShiftMs = 0;
+    }
   });
 
   function formatOngoing(ms: number): string {
@@ -46,11 +63,13 @@
       : `${m}:${String(s % 60).padStart(2, '0')}`;
   }
 
+  const effectiveNow = $derived(pauseStartedAt ?? now);
+
   const ongoingStr = $derived(
-    p?.file_started_at != null ? formatOngoing(now - p.file_started_at) : null,
+    p?.file_started_at != null ? formatOngoing(effectiveNow - p.file_started_at) : null,
   );
   const totalStr = $derived(
-    p?.job_started_at != null ? formatTotal(now - p.job_started_at) : null,
+    p?.job_started_at != null ? formatTotal(effectiveNow - p.job_started_at - totalPauseShiftMs) : null,
   );
 
   const canPause = $derived(job.status === 'running' || job.status === 'resuming');
