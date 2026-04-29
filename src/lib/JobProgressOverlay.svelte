@@ -143,13 +143,15 @@
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-md);
     backdrop-filter: blur(8px);
-    overflow: hidden;
     z-index: var(--z-overlay);
   }
 
   .track {
     height: 3px;
     background: var(--color-border);
+    border-top-left-radius: var(--radius-md);
+    border-top-right-radius: var(--radius-md);
+    overflow: hidden;
   }
 
   .fill {
