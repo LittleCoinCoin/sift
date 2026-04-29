@@ -34,12 +34,16 @@
   });
 
   function formatOngoing(ms: number): string {
-    return `Ongoing: ${Math.floor(ms / 1000)} sec`;
+    return `${Math.floor(ms / 1000)}s`;
   }
 
   function formatTotal(ms: number): string {
-    const sec = Math.floor(ms / 1000);
-    return `Total: ${Math.floor(sec / 60)} min ${sec % 60} sec`;
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    return h > 0
+      ? `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+      : `${m}:${String(s % 60).padStart(2, '0')}`;
   }
 
   const ongoingStr = $derived(
