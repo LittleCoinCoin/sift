@@ -29,11 +29,22 @@
   let now = $state(Date.now());
   let pauseStartedAt = $state<number | null>(null);
   let totalPauseShiftMs = $state(0);
+  let lastSeenJobStartedAt = $state<number | null>(null);
 
   $effect(() => {
     if (job.status !== 'running' && job.status !== 'resuming') return;
     const id = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(id);
+  });
+
+  $effect.pre(() => {
+    const jsa = p?.job_started_at ?? null;
+    if (jsa !== lastSeenJobStartedAt) {
+      lastSeenJobStartedAt = jsa;
+      pauseStartedAt = null;
+      totalPauseShiftMs = 0;
+      now = Date.now();
+    }
   });
 
   $effect(() => {
