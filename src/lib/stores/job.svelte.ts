@@ -103,9 +103,6 @@ class JobStore {
   // Pause the job, build a predicted cancellation summary, and open the cancel modal.
   async requestCancel() {
     if (!this._jobId) return;
-    if (this.status === 'running' || this.status === 'resuming') {
-      await this.pause();
-    }
 
     const p = get(progress);
     const done = p?.done ?? 0;
@@ -130,18 +127,22 @@ class JobStore {
       files,
     };
     this.cancelOpen = true;
+
+    if (this.status === 'running' || this.status === 'resuming') {
+      try { await this.pause(); } catch {}
+    }
   }
 
   // Confirmed from the cancel modal — close modal and send cancel to backend.
   async confirmCancel() {
     this.cancelOpen = false;
-    await this.cancel();
+    try { await this.cancel(); } catch {}
   }
 
   // Dismissed from the cancel modal — close modal and resume the job.
   async dismissCancelConfirm() {
     this.cancelOpen = false;
-    await this.resume();
+    try { await this.resume(); } catch {}
   }
 
   reset() {
