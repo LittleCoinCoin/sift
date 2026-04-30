@@ -277,6 +277,17 @@
     }
   }
 
+  function toggleSidebar() {
+    sidebarVisible = !sidebarVisible;
+  }
+
+  function onWindowKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+      e.preventDefault();
+      toggleSidebar();
+    }
+  }
+
   function startResize(e: MouseEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -308,6 +319,8 @@
     }
   }
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <div class="viewer">
   <!-- File list panel -->
@@ -380,7 +393,15 @@
     role="separator"
     aria-orientation="vertical"
     aria-label="Resize sidebar"
-  ></div>
+  >
+    <button
+      class="drawer-toggle"
+      onclick={toggleSidebar}
+      onmousedown={(e) => e.stopPropagation()}
+      title={sidebarVisible ? 'Hide sidebar (⌘B)' : 'Show sidebar (⌘B)'}
+      aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+    >{sidebarVisible ? '‹' : '›'}</button>
+  </div>
 
   <!-- Image pane -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
@@ -476,10 +497,45 @@
     cursor: col-resize;
     background: transparent;
     transition: background var(--duration-fast) var(--easing-default);
+    position: relative;
   }
 
   .resize-handle:hover {
     background: var(--color-primary);
+  }
+
+  .drawer-toggle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 16px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    line-height: 1;
+    pointer-events: all;
+    z-index: 1;
+    transition: color var(--duration-fast) var(--easing-default),
+                background var(--duration-fast) var(--easing-default);
+  }
+
+  .drawer-toggle:hover {
+    color: var(--color-text);
+    background: var(--color-surface-raised);
+  }
+
+  .drawer-toggle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
   }
 
   .panel-header {
