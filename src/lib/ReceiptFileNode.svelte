@@ -7,12 +7,14 @@
     displayName = undefined,
     dirPrefix = undefined,
     onselect,
+    ondblclick,
   }: {
     entry: ReceiptEntry;
     selected?: boolean;
     displayName?: string;
     dirPrefix?: string;
     onselect: (e: MouseEvent) => void;
+    ondblclick?: () => void;
   } = $props();
 
   const filenameColor = $derived(
@@ -41,6 +43,7 @@
   aria-selected={selected}
   tabindex="0"
   onclick={(e) => { e.stopPropagation(); onselect(e); }}
+  ondblclick={(e) => { e.stopPropagation(); ondblclick?.(); }}
   onkeydown={(e) => {
     if (e.key === 'Enter' || e.key === ' ') onselect(e as unknown as MouseEvent);
   }}

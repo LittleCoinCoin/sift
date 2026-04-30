@@ -405,6 +405,7 @@
         {filter}
         {viewMode}
         bind:selectedPaths={treeSelectedPaths}
+        ontabopen={(path, permanent) => openTab(path, !permanent)}
       />
     </div>
 
