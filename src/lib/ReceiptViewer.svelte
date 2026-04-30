@@ -131,6 +131,7 @@
   const activeFile = $derived(
     activeTabPath ? receipts.files.find(f => f.source_path === activeTabPath) ?? null : null
   );
+  const activeTab = $derived(tabs.find(t => t.path === activeTabPath) ?? null);
 
   // Load image when active tab changes; PDFs use receipt:// URI scheme directly
   $effect(() => {
@@ -643,34 +644,51 @@
           </div>
         </div>
 
-        <!-- Fields pane -->
-        <div class="fields-pane">
-    <div class="fields-header">
-      <h2>Receipt Details</h2>
-    </div>
+        <!-- Fields pane / reveal strip -->
+        {#if activeTab?.fieldsVisible && activeFile}
+          <div class="fields-pane">
+            <div class="fields-header">
+              <h2>Receipt Details</h2>
+              <button
+                type="button"
+                class="fields-collapse-btn"
+                onclick={() => setFieldsVisible(activeTabPath, false)}
+                aria-label="Collapse fields panel"
+                title="Collapse fields panel"
+              >›</button>
+            </div>
 
-    <div class="fields-body">
-      {#if record && record.fields}
-        {#each Object.entries(record.fields) as [key, value]}
-          <div class="field-group">
-            <label for="field-{key}">{key.replace(/_/g, ' ')}</label>
-            <input
-              id="field-{key}"
-              type="text"
-              value={value}
-              oninput={(e) => { if (record && record.fields) record.fields[key] = e.currentTarget.value; }}
-            />
+            <div class="fields-body">
+              {#if record && record.fields}
+                {#each Object.entries(record.fields) as [key, value]}
+                  <div class="field-group">
+                    <label for="field-{key}">{key.replace(/_/g, ' ')}</label>
+                    <input
+                      id="field-{key}"
+                      type="text"
+                      value={value}
+                      oninput={(e) => { if (record && record.fields) record.fields[key] = e.currentTarget.value; }}
+                    />
+                  </div>
+                {/each}
+              {:else}
+                <p class="fields-empty">
+                  {activeFile
+                    ? 'Click "Process" to extract receipt data.'
+                    : 'Select a receipt from the list.'}
+                </p>
+              {/if}
+            </div>
           </div>
-        {/each}
-      {:else}
-        <p class="fields-empty">
-          {activeFile
-            ? 'Click "Process" to extract receipt data.'
-            : 'Select a receipt from the list.'}
-        </p>
-      {/if}
-    </div>
-        </div>
+        {:else if activeFile}
+          <button
+            type="button"
+            class="fields-reveal-strip"
+            onclick={() => setFieldsVisible(activeTabPath, true)}
+            aria-label="Show fields panel"
+            title="Show fields panel"
+          >‹</button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -1105,6 +1123,10 @@
   }
 
   .fields-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
     padding: var(--space-4);
     border-bottom: 1px solid var(--color-border);
     flex-shrink: 0;
@@ -1115,6 +1137,65 @@
     font-weight: 600;
     color: var(--color-text);
     margin: 0;
+  }
+
+  .fields-collapse-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: var(--font-size-md);
+    line-height: 1;
+    flex-shrink: 0;
+    transition: color var(--duration-fast) var(--easing-default),
+                border-color var(--duration-fast) var(--easing-default),
+                background var(--duration-fast) var(--easing-default);
+  }
+
+  .fields-collapse-btn:hover {
+    color: var(--color-text);
+    border-color: var(--color-border);
+    background: var(--color-surface-raised);
+  }
+
+  .fields-collapse-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .fields-reveal-strip {
+    flex-shrink: 0;
+    width: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: var(--color-surface);
+    border: none;
+    border-left: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    line-height: 1;
+    transition: color var(--duration-fast) var(--easing-default),
+                background var(--duration-fast) var(--easing-default);
+  }
+
+  .fields-reveal-strip:hover {
+    color: var(--color-text);
+    background: var(--color-surface-raised);
+  }
+
+  .fields-reveal-strip:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
   }
 
   .btn-export {
