@@ -250,6 +250,43 @@
       : receipts.files.filter(f => f.status === 'Processed').length
   );
 
+  // Sidebar resize/toggle state
+  let sidebarWidth = $state(220);
+  let sidebarVisible = $state(true);
+  let resizeStartX = 0;
+  let resizeStartWidth = 0;
+  let resizeMinReached = false;
+
+  function onResizeMove(e: MouseEvent) {
+    const delta = e.clientX - resizeStartX;
+    const next = resizeStartWidth + delta;
+    if (next < 160) {
+      resizeMinReached = true;
+    } else {
+      resizeMinReached = false;
+    }
+    sidebarWidth = Math.max(180, Math.min(480, next));
+  }
+
+  function stopResize() {
+    window.removeEventListener('mousemove', onResizeMove);
+    window.removeEventListener('mouseup', stopResize);
+    if (resizeMinReached) {
+      sidebarVisible = false;
+      resizeMinReached = false;
+    }
+  }
+
+  function startResize(e: MouseEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    resizeStartX = e.clientX;
+    resizeStartWidth = sidebarWidth;
+    resizeMinReached = false;
+    window.addEventListener('mousemove', onResizeMove);
+    window.addEventListener('mouseup', stopResize);
+  }
+
   // Context menu
   let contextMenu = $state<{ x: number; y: number; paths: string[] } | null>(null);
 
@@ -274,7 +311,7 @@
 
 <div class="viewer">
   <!-- File list panel -->
-  <aside class="file-panel">
+  <aside class="file-panel" style="width: {sidebarVisible ? sidebarWidth : 0}px">
     <div class="panel-header">
       <span class="panel-title">Receipts</span>
       <div class="panel-header-actions">
@@ -335,6 +372,15 @@
       </button>
     </div>
   </aside>
+
+  <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
+  <div
+    class="resize-handle"
+    onmousedown={startResize}
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize sidebar"
+  ></div>
 
   <!-- Image pane -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
@@ -415,13 +461,25 @@
 
   /* ── File panel ─────────────────── */
   .file-panel {
-    width: 220px;
     flex-shrink: 0;
     border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
     background: var(--color-surface);
     overflow: hidden;
+    transition: width var(--duration-normal) var(--easing-default);
+  }
+
+  .resize-handle {
+    flex-shrink: 0;
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background var(--duration-fast) var(--easing-default);
+  }
+
+  .resize-handle:hover {
+    background: var(--color-primary);
   }
 
   .panel-header {
