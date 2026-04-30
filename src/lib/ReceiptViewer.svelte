@@ -279,6 +279,32 @@
     window.addEventListener('mouseup', onWindowMouseUp);
   }
 
+  const ZOOM_PRESETS = [100, 125, 150, 200, 300, 400, 500];
+  let zoomDropdownOpen = $state(false);
+
+  function zoomIn() {
+    const next = ZOOM_PRESETS.find(p => p > zoomPercent);
+    if (next !== undefined) zoomPercent = next;
+  }
+
+  function zoomOut() {
+    let prev = 100;
+    for (const p of ZOOM_PRESETS) {
+      if (p < zoomPercent) prev = p;
+      else break;
+    }
+    zoomPercent = prev;
+  }
+
+  function applyZoomInput(raw: string) {
+    const n = parseInt(raw.replace(/[^0-9]/g, ''), 10);
+    if (Number.isNaN(n)) {
+      zoomPercent = zoomPercent; // no-op redisplay
+      return;
+    }
+    zoomPercent = Math.max(100, Math.min(500, n));
+  }
+
   function resetView() {
     zoomPercent = 100;
     if (imagePane) {
@@ -517,35 +543,96 @@
       <div class="no-tab-placeholder">Select a receipt from the list</div>
     {:else}
       <div class="tab-content">
-        <!-- Image pane -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
-        <div
-          class="image-pane"
-          class:dragging={isDragging}
-          bind:this={imagePane}
-          onwheel={onWheel}
-          onmousedown={onMouseDown}
-          role="img"
-          aria-label="Receipt image viewer — scroll to zoom, drag to pan"
-        >
-          {#if imageLoading}
-            <div class="placeholder">Loading…</div>
-          {:else if imageData}
-            <img
-              src={imageData}
-              alt="Receipt"
-              draggable="false"
-              style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;"
-              onload={onImageLoad}
-              onerror={() => showToast('error', `Failed to render PDF: ${activeFile?.source_path ?? ''}`)}
-            />
-          {:else}
-            <div class="placeholder muted">Select a receipt from the list</div>
-          {/if}
+        <!-- Image area: image pane + zoom toolbar -->
+        <div class="image-area">
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
+          <div
+            class="image-pane"
+            class:dragging={isDragging}
+            bind:this={imagePane}
+            onwheel={onWheel}
+            onmousedown={onMouseDown}
+            role="img"
+            aria-label="Receipt image viewer — scroll to zoom, drag to pan"
+          >
+            {#if imageLoading}
+              <div class="placeholder">Loading…</div>
+            {:else if imageData}
+              <img
+                src={imageData}
+                alt="Receipt"
+                draggable="false"
+                style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;"
+                onload={onImageLoad}
+                onerror={() => showToast('error', `Failed to render PDF: ${activeFile?.source_path ?? ''}`)}
+              />
+            {:else}
+              <div class="placeholder muted">Select a receipt from the list</div>
+            {/if}
+          </div>
 
-          {#if zoomPercent !== 100 || panX !== 0 || panY !== 0}
-            <button class="reset-btn" onclick={resetView}>⟲ Reset view</button>
-          {/if}
+          <div class="zoom-toolbar">
+            <button
+              class="zt-btn"
+              onclick={zoomOut}
+              disabled={!imageData || zoomPercent === 100}
+              aria-label="Zoom out"
+              title="Zoom out"
+            >−</button>
+            <button
+              class="zt-btn"
+              onclick={zoomIn}
+              disabled={!imageData}
+              aria-label="Zoom in"
+              title="Zoom in"
+            >+</button>
+            <span class="zt-sep" aria-hidden="true"></span>
+            <div class="zt-input-group">
+              <input
+                class="zt-input"
+                type="text"
+                value="{zoomPercent}%"
+                disabled={!imageData}
+                aria-label="Zoom level"
+                onfocus={(e) => e.currentTarget.select()}
+                onblur={(e) => applyZoomInput(e.currentTarget.value)}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    applyZoomInput(e.currentTarget.value);
+                    e.currentTarget.blur();
+                  }
+                }}
+              />
+              <button
+                class="zt-dropdown-btn"
+                onclick={() => { zoomDropdownOpen = !zoomDropdownOpen; }}
+                disabled={!imageData}
+                aria-label="Zoom presets"
+                aria-expanded={zoomDropdownOpen}
+                title="Zoom presets"
+              >▾</button>
+              {#if zoomDropdownOpen}
+                <div class="zt-dropdown" role="listbox">
+                  {#each ZOOM_PRESETS as preset (preset)}
+                    <button
+                      class="zt-dropdown-item"
+                      role="option"
+                      aria-selected={zoomPercent === preset}
+                      onclick={() => { zoomPercent = preset; zoomDropdownOpen = false; }}
+                    >{preset}%</button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <span class="zt-sep" aria-hidden="true"></span>
+            <button
+              class="zt-btn"
+              onclick={resetView}
+              disabled={!imageData}
+              aria-label="Reset view"
+              title="Reset view"
+            >⟲</button>
+          </div>
         </div>
 
         <!-- Fields pane -->
@@ -850,22 +937,153 @@
 
   .muted { color: var(--color-text-muted); }
 
-  .reset-btn {
-    position: absolute;
-    bottom: var(--space-4);
-    right: var(--space-4);
-    padding: var(--space-1) var(--space-3);
-    background: color-mix(in srgb, var(--color-surface) 85%, transparent);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    cursor: pointer;
-    font-size: var(--font-size-sm);
-    color: var(--color-text-muted);
-    backdrop-filter: blur(6px);
-    transition: color var(--duration-fast) var(--easing-default);
+  /* ── Image area / zoom toolbar ──── */
+  .image-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
   }
 
-  .reset-btn:hover { color: var(--color-text); }
+  .zoom-toolbar {
+    flex-shrink: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+  }
+
+  .zt-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: var(--font-size-md);
+    line-height: 1;
+    transition: color var(--duration-fast) var(--easing-default),
+                background var(--duration-fast) var(--easing-default),
+                border-color var(--duration-fast) var(--easing-default);
+  }
+
+  .zt-btn:hover:not(:disabled) {
+    color: var(--color-text);
+    background: var(--color-surface-raised);
+    border-color: var(--color-border);
+  }
+
+  .zt-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .zt-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .zt-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--color-border);
+    margin: 0 var(--space-1);
+  }
+
+  .zt-input-group {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-raised);
+    overflow: visible;
+  }
+
+  .zt-input {
+    width: 56px;
+    padding: 0 var(--space-2);
+    background: transparent;
+    border: none;
+    color: var(--color-text);
+    font-size: var(--font-size-sm);
+    text-align: right;
+    outline: none;
+  }
+
+  .zt-input:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .zt-dropdown-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-left: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    line-height: 1;
+  }
+
+  .zt-dropdown-btn:hover:not(:disabled) {
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+
+  .zt-dropdown-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .zt-dropdown {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    margin-bottom: var(--space-1);
+    display: flex;
+    flex-direction: column;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    z-index: 10;
+    overflow: hidden;
+  }
+
+  .zt-dropdown-item {
+    padding: var(--space-1) var(--space-2);
+    background: none;
+    border: none;
+    color: var(--color-text);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    text-align: right;
+  }
+
+  .zt-dropdown-item:hover {
+    background: var(--color-surface-raised);
+  }
+
+  .zt-dropdown-item[aria-selected="true"] {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
 
   /* ── Fields pane ─────────────────── */
   .fields-pane {
