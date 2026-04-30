@@ -690,6 +690,8 @@
   .btn-export {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     padding: var(--space-2) var(--space-4);
     background: none;
     color: var(--color-text-muted);
@@ -723,6 +725,8 @@
   .btn-process {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     padding: var(--space-2) var(--space-4);
     background: var(--color-primary);
     color: #fff; /* gap: --color-on-primary */
