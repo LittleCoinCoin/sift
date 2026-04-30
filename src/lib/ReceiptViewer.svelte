@@ -16,7 +16,9 @@
   let imageLoading = $state(false);
 
   // Pan/zoom state
-  let zoom = $state(1);
+  let fitScale = $state(1);
+  let zoomPercent = $state(100);
+  const zoom = $derived(fitScale * zoomPercent / 100);
   let panX = $state(0);
   let panY = $state(0);
   let isDragging = $state(false);
@@ -125,7 +127,7 @@
   // Load image when active tab changes; PDFs use receipt:// URI scheme directly
   $effect(() => {
     const file = activeFile;
-    zoom = 1;
+    zoomPercent = 100;
     panX = 0;
     panY = 0;
 
@@ -222,17 +224,37 @@
   }
 
   // Pan/zoom handlers
+  function onImageLoad(e: Event) {
+    const img = e.currentTarget as HTMLImageElement;
+    const rect = imagePane.getBoundingClientRect();
+    const paneW = rect.width;
+    const paneH = rect.height;
+    const nW = img.naturalWidth || 0;
+    const nH = img.naturalHeight || 0;
+    if (nW === 0 || nH === 0 || paneW === 0 || paneH === 0) {
+      fitScale = 1;
+    } else {
+      fitScale = Math.min(paneH / nH, paneW / nW);
+    }
+    zoomPercent = 100;
+    panX = Math.max(0, (paneW - nW * fitScale) / 2);
+    panY = 0;
+  }
+
   function onWheel(e: WheelEvent) {
     e.preventDefault();
     const rect = imagePane.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const newZoom = Math.max(0.1, Math.min(20, zoom * factor));
-    const ratio = newZoom / zoom;
+    const oldZoom = zoom;
+    const newPercent = Math.max(100, Math.min(2000, zoomPercent * factor));
+    const newZoom = fitScale * newPercent / 100;
+    if (oldZoom === 0) return;
+    const ratio = newZoom / oldZoom;
     panX = mx * (1 - ratio) + panX * ratio;
     panY = my * (1 - ratio) + panY * ratio;
-    zoom = newZoom;
+    zoomPercent = newPercent;
   }
 
   function onWindowMouseMove(e: MouseEvent) {
@@ -258,8 +280,15 @@
   }
 
   function resetView() {
-    zoom = 1;
-    panX = 0;
+    zoomPercent = 100;
+    if (imagePane) {
+      const rect = imagePane.getBoundingClientRect();
+      const img = imagePane.querySelector('img') as HTMLImageElement | null;
+      const nW = img?.naturalWidth ?? 0;
+      panX = Math.max(0, (rect.width - nW * fitScale) / 2);
+    } else {
+      panX = 0;
+    }
     panY = 0;
   }
 
@@ -283,7 +312,6 @@
     }
   });
 
-  const isTransformed = $derived(zoom !== 1 || panX !== 0 || panY !== 0);
   const isProcessing = $derived(job.isActive);
   const record = $derived(activeFile);
 
@@ -508,13 +536,14 @@
               alt="Receipt"
               draggable="false"
               style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;"
+              onload={onImageLoad}
               onerror={() => showToast('error', `Failed to render PDF: ${activeFile?.source_path ?? ''}`)}
             />
           {:else}
             <div class="placeholder muted">Select a receipt from the list</div>
           {/if}
 
-          {#if isTransformed}
+          {#if zoomPercent !== 100 || panX !== 0 || panY !== 0}
             <button class="reset-btn" onclick={resetView}>⟲ Reset view</button>
           {/if}
         </div>
