@@ -72,9 +72,59 @@
 
   const isPdf = (path: string) => path.toLowerCase().endsWith('.pdf');
 
-  // Load image when selection changes; PDFs use receipt:// URI scheme directly
+  // ── Tab state ─────────────────────────────────────────────
+  interface TabEntry {
+    path: string;
+    temporary: boolean;
+  }
+
+  let tabs = $state<TabEntry[]>([]);
+  let activeTabPath = $state<string | null>(null);
+
+  function openTab(path: string, asTemporary: boolean): void {
+    const existingIdx = tabs.findIndex(t => t.path === path);
+    if (existingIdx !== -1) {
+      // Already open: activate. Promote to permanent if not asTemporary.
+      if (!asTemporary && tabs[existingIdx].temporary) {
+        tabs[existingIdx].temporary = false;
+      }
+      activeTabPath = path;
+      return;
+    }
+    if (asTemporary) {
+      const tempIdx = tabs.findIndex(t => t.temporary);
+      if (tempIdx !== -1) {
+        tabs[tempIdx] = { path, temporary: true };
+        activeTabPath = path;
+        return;
+      }
+    }
+    tabs.push({ path, temporary: asTemporary });
+    activeTabPath = path;
+  }
+
+  function closeTab(path: string, e?: MouseEvent): void {
+    e?.stopPropagation();
+    const idx = tabs.findIndex(t => t.path === path);
+    if (idx === -1) return;
+    tabs.splice(idx, 1);
+    if (activeTabPath === path) {
+      if (tabs.length === 0) {
+        activeTabPath = null;
+      } else {
+        const nextIdx = idx < tabs.length ? idx : idx - 1;
+        activeTabPath = tabs[nextIdx].path;
+      }
+    }
+  }
+
+  const activeFile = $derived(
+    activeTabPath ? receipts.files.find(f => f.source_path === activeTabPath) ?? null : null
+  );
+
+  // Load image when active tab changes; PDFs use receipt:// URI scheme directly
   $effect(() => {
-    const file = receipts.selectedFile;
+    const file = activeFile;
     zoom = 1;
     panX = 0;
     panY = 0;
@@ -235,7 +285,7 @@
 
   const isTransformed = $derived(zoom !== 1 || panX !== 0 || panY !== 0);
   const isProcessing = $derived(job.isActive);
-  const record = $derived(receipts.selectedFile);
+  const record = $derived(activeFile);
 
   // AC #3/#4: no selection → counts across all files
   // AC #5: selection active → Process = all selected; Export = selected ∩ Processed
