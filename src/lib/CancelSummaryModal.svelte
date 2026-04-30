@@ -13,7 +13,7 @@
   let modalEl: HTMLElement | null = $state(null);
 
   $effect(() => {
-    if (!job.cancelOpen || !modalEl) return;
+    if (job.state.case !== 'cancelConfirming' || !modalEl) return;
 
     const previousFocus = document.activeElement as HTMLElement | null;
 
@@ -60,7 +60,8 @@
   });
 </script>
 
-{#if job.cancelOpen}
+{#if job.state.case === 'cancelConfirming'}
+  {@const s = job.state.summary}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="backdrop" onclick={() => job.dismissCancelConfirm()}>
     <div
@@ -77,32 +78,29 @@
         <button class="close-btn" onclick={() => job.dismissCancelConfirm()} aria-label="Close">×</button>
       </div>
 
-      {#if job.cancelSummary}
-        {@const s = job.cancelSummary}
-        <div class="stats-row">
-          <span class="stat stat--processed">{s.processed} processed</span>
+      <div class="stats-row">
+        <span class="stat stat--processed">{s.processed} processed</span>
+        <span class="stat-sep">·</span>
+        <span class="stat stat--abandoned">{s.abandoned} abandoned</span>
+        {#if s.failed > 0}
           <span class="stat-sep">·</span>
-          <span class="stat stat--abandoned">{s.abandoned} abandoned</span>
-          {#if s.failed > 0}
-            <span class="stat-sep">·</span>
-            <span class="stat stat--failed">{s.failed} failed</span>
-          {/if}
-          <span class="stat-total">of {s.total}</span>
-        </div>
-
-        {#if s.files.length > 0}
-          <ul class="file-list" aria-label="Predicted file outcomes">
-            {#each s.files as f (f.path)}
-              <li class="file-row file-row--{f.status}">
-                <span class="file-badge">{statusLabel(f.status)}</span>
-                <span class="file-path" title={f.path}>{basename(f.path)}</span>
-                {#if f.in_flight}
-                  <span class="in-flight-tag">mid-flight</span>
-                {/if}
-              </li>
-            {/each}
-          </ul>
+          <span class="stat stat--failed">{s.failed} failed</span>
         {/if}
+        <span class="stat-total">of {s.total}</span>
+      </div>
+
+      {#if s.files.length > 0}
+        <ul class="file-list" aria-label="Predicted file outcomes">
+          {#each s.files as f (f.path)}
+            <li class="file-row file-row--{f.status}">
+              <span class="file-badge">{statusLabel(f.status)}</span>
+              <span class="file-path" title={f.path}>{basename(f.path)}</span>
+              {#if f.in_flight}
+                <span class="in-flight-tag">mid-flight</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
       {/if}
 
       <div class="modal-footer modal-footer--split">

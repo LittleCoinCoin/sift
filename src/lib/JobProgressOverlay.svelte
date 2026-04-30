@@ -32,7 +32,7 @@
   let lastSeenJobStartedAt = $state<number | null>(null);
 
   $effect(() => {
-    if (job.status !== 'running' && job.status !== 'resuming') return;
+    if (job.state.case !== 'running' && job.state.case !== 'resuming') return;
     const id = setInterval(() => { now = Date.now(); }, 1000);
     return () => clearInterval(id);
   });
@@ -48,7 +48,7 @@
   });
 
   $effect(() => {
-    const s = job.status;
+    const s = job.state.case;
     if (s === 'paused' && pauseStartedAt == null) {
       pauseStartedAt = Date.now();
     } else if (s !== 'paused' && pauseStartedAt != null) {
@@ -83,10 +83,10 @@
     p?.job_started_at != null ? formatTotal(effectiveNow - p.job_started_at - totalPauseShiftMs) : null,
   );
 
-  const canPause = $derived(job.status === 'running' || job.status === 'resuming');
-  const canResume = $derived(job.status === 'paused');
-  const isCancelling = $derived(job.status === 'cancelling');
-  const canCancel = $derived(!isCancelling && job.status !== 'cancelled');
+  const canPause = $derived(job.state.case === 'running' || job.state.case === 'resuming');
+  const canResume = $derived(job.state.case === 'paused');
+  const isCancelling = $derived(job.state.case === 'cancelling');
+  const canCancel = $derived(!isCancelling && job.state.case !== 'cancelled');
 </script>
 
 {#if job.isActive}
@@ -119,14 +119,14 @@
           {/if}
           <span
             class="file-name"
-            class:file-name--active={job.status === 'running' && !!currentFile}
+            class:file-name--active={job.state.case === 'running' && !!currentFile}
             title={p?.current_file ?? undefined}
           >
             {#if currentFile}
               {currentFile}
             {:else if isCancelling}
               Cancelling…
-            {:else if job.status === 'paused'}
+            {:else if job.state.case === 'paused'}
               Paused
             {:else}
               Processing…
