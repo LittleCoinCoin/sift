@@ -32,6 +32,7 @@
     selectedPaths = $bindable(new SvelteSet<string>()),
     filteredCount = $bindable(0),
     filteredPaths = $bindable([] as string[]),
+    ontabopen,
   }: {
     entries: ReceiptEntry[];
     filter?: { text: string; statusFilters: ReceiptStatus[] };
@@ -39,6 +40,7 @@
     selectedPaths?: SvelteSet<string>;
     filteredCount?: number;
     filteredPaths?: string[];
+    ontabopen?: (path: string, permanent: boolean) => void;
   } = $props();
 
   // ---------------------------------------------------------------------------
@@ -194,7 +196,14 @@
     } else {
       selectedPaths = new SvelteSet([path]);
     }
+    if (!e.metaKey && !e.ctrlKey && !e.shiftKey) {
+      ontabopen?.(path, false);
+    }
     lastClickedPath = path;
+  }
+
+  function handleDblclick(path: string): void {
+    ontabopen?.(path, true);
   }
 
   function handleKeydown(e: KeyboardEvent): void {
@@ -284,6 +293,7 @@
               displayName={item.entry!.source_path.split('/').at(-1)}
               selected={selectedPaths.has(item.entry!.source_path)}
               onselect={(e: MouseEvent) => handleSelect(item.entry!.source_path, e)}
+              ondblclick={() => handleDblclick(item.entry!.source_path)}
             />
           {/if}
         </div>
@@ -303,6 +313,7 @@
           dirPrefix={dir}
           selected={selectedPaths.has(entry.source_path)}
           onselect={(e: MouseEvent) => handleSelect(entry.source_path, e)}
+          ondblclick={() => handleDblclick(entry.source_path)}
         />
       {/each}
     </div>
