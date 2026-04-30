@@ -78,6 +78,7 @@
   interface TabEntry {
     path: string;
     temporary: boolean;
+    fieldsVisible: boolean;
   }
 
   let tabs = $state<TabEntry[]>([]);
@@ -96,13 +97,20 @@
     if (asTemporary) {
       const tempIdx = tabs.findIndex(t => t.temporary);
       if (tempIdx !== -1) {
-        tabs[tempIdx] = { path, temporary: true };
+        tabs[tempIdx] = { path, temporary: true, fieldsVisible: true };
         activeTabPath = path;
         return;
       }
     }
-    tabs.push({ path, temporary: asTemporary });
+    tabs.push({ path, temporary: asTemporary, fieldsVisible: true });
     activeTabPath = path;
+  }
+
+  function setFieldsVisible(path: string | null, value: boolean): void {
+    if (!path) return;
+    const idx = tabs.findIndex(t => t.path === path);
+    if (idx === -1) return;
+    tabs[idx].fieldsVisible = value;
   }
 
   function closeTab(path: string, e?: MouseEvent): void {
