@@ -454,48 +454,73 @@
     >{sidebarVisible ? '‹' : '›'}</button>
   </div>
 
-  <!-- Image pane -->
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
-  <div
-    class="image-pane"
-    class:dragging={isDragging}
-    bind:this={imagePane}
-    onwheel={onWheel}
-    onmousedown={onMouseDown}
-    role="img"
-    aria-label="Receipt image viewer — scroll to zoom, drag to pan"
-  >
-    {#if imageLoading}
-      <div class="placeholder">Loading…</div>
-    {:else if imageData}
-      <img
-        src={imageData}
-        alt="Receipt"
-        draggable="false"
-        style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;"
-        onerror={() => showToast('error', `Failed to render PDF: ${receipts.selectedFile?.source_path ?? ''}`)}
-      />
+  <!-- Main area: tab bar + content -->
+  <div class="main-area">
+    <div class="tab-bar" role="tablist">
+      {#each tabs as tab (tab.path)}
+        {@const fname = tab.path.split('/').at(-1) ?? tab.path}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+          class="tab"
+          class:tab-active={tab.path === activeTabPath}
+          class:tab-temporary={tab.temporary}
+          role="tab"
+          tabindex="0"
+          aria-selected={tab.path === activeTabPath}
+          title={tab.path}
+          onclick={() => { activeTabPath = tab.path; }}
+          ondblclick={() => openTab(tab.path, false)}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') { activeTabPath = tab.path; }
+          }}
+        >
+          <span class="tab-label">{fname}</span>
+          <button
+            type="button"
+            class="tab-close"
+            aria-label="Close tab"
+            onclick={(e) => closeTab(tab.path, e)}
+          >×</button>
+        </div>
+      {/each}
+    </div>
+
+    {#if tabs.length === 0}
+      <div class="no-tab-placeholder">Select a receipt from the list</div>
     {:else}
-      <div class="placeholder muted">Select a receipt from the list</div>
-    {/if}
+      <div class="tab-content">
+        <!-- Image pane -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
+        <div
+          class="image-pane"
+          class:dragging={isDragging}
+          bind:this={imagePane}
+          onwheel={onWheel}
+          onmousedown={onMouseDown}
+          role="img"
+          aria-label="Receipt image viewer — scroll to zoom, drag to pan"
+        >
+          {#if imageLoading}
+            <div class="placeholder">Loading…</div>
+          {:else if imageData}
+            <img
+              src={imageData}
+              alt="Receipt"
+              draggable="false"
+              style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;"
+              onerror={() => showToast('error', `Failed to render PDF: ${activeFile?.source_path ?? ''}`)}
+            />
+          {:else}
+            <div class="placeholder muted">Select a receipt from the list</div>
+          {/if}
 
-    {#if isTransformed}
-      <button class="reset-btn" onclick={resetView}>⟲ Reset view</button>
-    {/if}
-  </div>
+          {#if isTransformed}
+            <button class="reset-btn" onclick={resetView}>⟲ Reset view</button>
+          {/if}
+        </div>
 
-  {#if contextMenu}
-    <ContextMenu
-      x={contextMenu.x}
-      y={contextMenu.y}
-      paths={contextMenu.paths}
-      ondelete={deleteFiles}
-      onclose={() => { contextMenu = null; }}
-    />
-  {/if}
-
-  <!-- Fields pane -->
-  <div class="fields-pane">
+        <!-- Fields pane -->
+        <div class="fields-pane">
     <div class="fields-header">
       <h2>Receipt Details</h2>
     </div>
@@ -515,12 +540,15 @@
         {/each}
       {:else}
         <p class="fields-empty">
-          {receipts.selectedFile
+          {activeFile
             ? 'Click "Process" to extract receipt data.'
             : 'Select a receipt from the list.'}
         </p>
       {/if}
     </div>
+        </div>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -659,6 +687,102 @@
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     border-top: 1px solid var(--color-border);
+  }
+
+  /* ── Main area / tab bar ──────────── */
+  .main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .tab-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: stretch;
+    overflow-x: auto;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    min-height: 32px;
+  }
+
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
+    max-width: 220px;
+    transition: background var(--duration-fast) var(--easing-default),
+                color var(--duration-fast) var(--easing-default);
+  }
+
+  .tab:hover {
+    background: var(--color-surface-raised);
+    color: var(--color-text);
+  }
+
+  .tab-active {
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  .tab-temporary .tab-label {
+    font-style: italic;
+  }
+
+  .tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
+  }
+
+  .tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .tab-close:hover {
+    background: var(--color-surface-raised);
+    color: var(--color-text);
+  }
+
+  .tab-content {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .no-tab-placeholder {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+    background: var(--color-bg);
   }
 
   /* ── Image pane ─────────────────── */
