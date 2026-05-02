@@ -27,7 +27,8 @@
     "targets": "all",
     "icon": [],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "entitlements.plist"
     },
     "resources": ["libpdfium.dylib"]
   }
