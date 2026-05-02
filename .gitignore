@@ -32,6 +32,8 @@ src-tauri/pdfium.dll
 
 # Playwright MCP tool cache
 .playwright-mcp/
+# Root-level screenshots from Playwright or manual captures
+/*.png
 
 # Logs
 *.log
