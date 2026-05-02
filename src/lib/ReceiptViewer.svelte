@@ -178,6 +178,10 @@
     }
   });
 
+  $effect(() => {
+    if (job.completedAt) refreshReceipts();
+  });
+
   async function processSelected() {
     const paths = [...receipts.selectedPaths];
     if (paths.length === 0) return;

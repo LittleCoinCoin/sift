@@ -73,6 +73,7 @@ let _initialized = false;
 
 class JobStore {
   state = $state<JobState>({ case: 'idle' });
+  completedAt = $state(0);
 
   get isActive(): boolean {
     const c = this.state.case;
@@ -229,10 +230,12 @@ export async function initJobStore() {
       : `Processed ${payload.processed} receipt${payload.processed !== 1 ? 's' : ''}.`;
     job.state = { case: 'done', lastJobId: payload.job_id, outcome: payload };
     showToast(payload.failed > 0 ? 'warn' : 'success', msg);
+    job.completedAt = Date.now();
   });
 
   // Fired when job is cancelled — update state; modal was already shown predictively on requestCancel.
   await listen<JobSummary>('job_cancelled', ({ payload }) => {
     job.state = { case: 'cancelled', lastJobId: payload.job_id, outcome: payload };
+    job.completedAt = Date.now();
   });
 }
