@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    receipt_ocr_lib::run();
+    sift_lib::run();
 }

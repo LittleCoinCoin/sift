@@ -1,6 +1,6 @@
 use keyring::Entry;
 
-const SERVICE: &str = "receipt-ocr";
+const SERVICE: &str = "sift";
 const USER: &str = "api-key";
 const EXTRACTION_USER: &str = "extraction-api-key";
 
