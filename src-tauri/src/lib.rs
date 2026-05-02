@@ -213,6 +213,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             use pdfium_render::prelude::Pdfium;
+            use tauri::Manager;
             let lib_name = Pdfium::pdfium_platform_library_name();
             let dylib_path = if tauri::is_dev() {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(lib_name)
