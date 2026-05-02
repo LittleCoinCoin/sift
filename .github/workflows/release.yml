@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            label: apple-silicon
+          - target: x86_64-apple-darwin
+            label: intel
+
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install frontend deps
+        run: pnpm install
+
+      - name: Build and bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: '-'
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Sift ${{ github.ref_name }}'
+          releaseBody: |
+            ## Installation
+
+            1. Download the `.dmg` for your Mac — **Apple Silicon** (`aarch64`) or **Intel** (`x86_64`).
+            2. Open the `.dmg` and drag **Sift** to `/Applications`.
+            3. First launch only: macOS will block the app because it is not from the App Store.
+               Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+               After that, Sift opens normally with a double-click.
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}

@@ -211,6 +211,17 @@ async fn get_job_state(
 
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            use pdfium_render::prelude::Pdfium;
+            let lib_name = Pdfium::pdfium_platform_library_name();
+            let dylib_path = if tauri::is_dev() {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(lib_name)
+            } else {
+                app.path().resource_dir()?.join(lib_name)
+            };
+            receipt::init_pdfium_path(dylib_path);
+            Ok(())
+        })
         .register_asynchronous_uri_scheme_protocol("receipt", |_ctx, request, responder| {
             handle_receipt_uri(request, responder);
         })

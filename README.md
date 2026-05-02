@@ -1,45 +1,45 @@
-# receipt-processor
+# Sift
 
-A desktop app for OCR processing of receipts using a local or remote LLM API (OpenAI-compatible). Built with Tauri 2 + Svelte 5.
+Point Sift at a folder of documents, tell it which fields to extract, and get a CSV. It sends each document through a configurable LLM endpoint (local or remote) for OCR and field extraction — no cloud lock-in, no fixed schema. Receipts are one use case; invoices, forms, lab reports, or any other structured document collection work just as well.
 
-## Prerequisites
+<!-- screenshot -->
 
-- [Rust](https://rustup.rs/) (stable)
-- [Node.js](https://nodejs.org/) 18+ and [pnpm](https://pnpm.io/)
-- An OpenAI-compatible LLM API (e.g. [Ollama](https://ollama.com/) with a vision model like `llava`)
-- macOS: Xcode Command Line Tools (`xcode-select --install`)
+---
 
-## Setup
+## Download & install
 
-```bash
-# Install JS dependencies
+1. Go to the [Releases](../../releases) page and download the `.dmg` for your Mac:
+   - **Apple Silicon** (any M-series chip): `Sift_*_aarch64.dmg`
+   - **Intel**: `Sift_*_x86_64.dmg`
+2. Open the `.dmg` and drag **Sift** into `/Applications`.
+3. **First launch only** — Sift is not signed and notarized through Apple's developer pipeline, so macOS will block it on first open as a security precaution. To allow it: open **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway**.
+   After that, Sift opens normally with a double-click.
+
+---
+
+## Configuration
+
+Open **Settings** (gear icon, top-right) and fill in:
+
+| Setting | What it is |
+|---|---|
+| OCR endpoint | Base URL of your LLM API (e.g. `http://localhost:11434/v1`) |
+| OCR model | Model name to use for OCR (e.g. `lightonocr`) |
+| Extraction endpoint | Base URL for field extraction (can be the same endpoint) |
+| Extraction model | Model name for extraction (e.g. `qwen2.5`) |
+| API key | Bearer token, if your endpoint requires one |
+
+Both endpoints follow the OpenAI-compatible chat completions API. Any local server that speaks that protocol (Ollama, LM Studio, llama.cpp server, etc.) works out of the box.
+
+---
+
+## Building from source
+
+```sh
+# Prerequisites: Rust, Node.js ≥ 22, pnpm
 pnpm install
-
-# Run in development mode (hot-reload)
-pnpm tauri dev
-
-# Build a release binary
 pnpm tauri build
+# Output: src-tauri/target/release/bundle/dmg/
 ```
 
-## First-time configuration
-
-1. Click the **⚙ Settings** button in the top-right corner.
-2. Enter your **API Endpoint** URL (e.g. `http://localhost:11434` for Ollama).
-3. Click **Ping** to verify connectivity.
-4. Optionally enter your **API Key** — it is stored in the system keychain and never written to disk in plain text.
-5. Click **Load models** and select a vision-capable model (e.g. `llava`).
-6. Optionally set your **Receipt Directory** so it pre-fills on launch.
-7. Click **Save settings**.
-
-## Usage
-
-1. Enter a directory path in the left panel and click **Scan** (or press Enter) to load receipt images and PDFs.
-2. Select a file from the list.
-3. Click **Process** to run OCR — extracted fields appear in the right panel.
-4. Edit any field inline as needed.
-5. Click **Export CSV** to save all processed receipts to a CSV file. Column order follows the **CSV Columns** setting.
-
-## CSV columns
-
-Customize which fields appear in the export (and their order) via Settings → CSV Columns. Drag to reorder, click × to remove, or type a name and click **Add** for custom columns.
+`libpdfium.dylib` is downloaded automatically during the build for the correct target architecture.

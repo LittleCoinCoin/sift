@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "receipt-ocr",
+  "productName": "Sift",
   "version": "0.1.0",
-  "identifier": "jp.riken.receipt-ocr",
+  "identifier": "dev.eliottjacopin.sift",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Receipt OCR",
+        "title": "Sift",
         "width": 1200,
         "height": 800,
         "resizable": true
@@ -25,6 +25,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "macOS": {
+      "signingIdentity": "-"
+    },
+    "resources": ["libpdfium.dylib"]
   }
 }

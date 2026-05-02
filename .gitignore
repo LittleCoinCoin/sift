@@ -25,6 +25,10 @@ Thumbs.db
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+# pdfium is downloaded at build time per target arch — never commit
+src-tauri/libpdfium.dylib
+src-tauri/libpdfium.so
+src-tauri/pdfium.dll
 
 # Playwright MCP tool cache
 .playwright-mcp/

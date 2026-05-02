@@ -5,6 +5,16 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
+/// Path to the pdfium shared library, resolved once at app startup.
+/// Falls back to CARGO_MANIFEST_DIR at compile time when unset (dev mode).
+static PDFIUM_LIB_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init_pdfium_path(path: PathBuf) {
+    PDFIUM_LIB_PATH.set(path).ok();
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReceiptRecord {
@@ -297,12 +307,18 @@ fn image_mime(ext: &str) -> &'static str {
 pub fn render_pdf_first_page(path: &std::path::Path) -> Result<Vec<u8>> {
     use pdfium_render::prelude::*;
 
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(
+    let lib_path = PDFIUM_LIB_PATH
+        .get()
+        .cloned()
+        .unwrap_or_else(|| {
+            // Dev fallback: dylib lives next to Cargo.toml
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(Pdfium::pdfium_platform_library_name()),
-        )
-        .map_err(|e| anyhow!("pdfium library not found: {}", e))?,
+                .join(Pdfium::pdfium_platform_library_name())
+        });
+
+    let pdfium = Pdfium::new(
+        Pdfium::bind_to_library(&lib_path)
+            .map_err(|e| anyhow!("pdfium library not found at {:?}: {}", lib_path, e))?,
     );
 
     let doc = pdfium
