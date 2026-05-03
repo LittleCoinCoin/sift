@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    tauri_build::build();
     download_pdfium();
+    tauri_build::build();
 }
 
 fn download_pdfium() {
