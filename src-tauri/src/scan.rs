@@ -102,7 +102,9 @@ pub async fn scan_all_receipt_dirs(
 
     index.retain(|k, _| found.contains(k));
     crate::receipt_index::save_index(&app, &index).await?;
-    Ok(index.into_values().collect())
+    let mut entries: Vec<crate::receipt_index::ReceiptEntry> = index.into_values().collect();
+    entries.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -110,6 +112,34 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn sort_order_is_alphabetical_by_source_path() {
+        let mut entries = vec![
+            crate::receipt_index::ReceiptEntry {
+                source_path: "/receipts/z.jpg".to_string(),
+                status: crate::receipt_index::ProcessingStatus::Unprocessed,
+                fields: None,
+                source_mtime: 0,
+            },
+            crate::receipt_index::ReceiptEntry {
+                source_path: "/receipts/a.pdf".to_string(),
+                status: crate::receipt_index::ProcessingStatus::Unprocessed,
+                fields: None,
+                source_mtime: 0,
+            },
+            crate::receipt_index::ReceiptEntry {
+                source_path: "/receipts/m.png".to_string(),
+                status: crate::receipt_index::ProcessingStatus::Unprocessed,
+                fields: None,
+                source_mtime: 0,
+            },
+        ];
+        entries.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+        assert_eq!(entries[0].source_path, "/receipts/a.pdf");
+        assert_eq!(entries[1].source_path, "/receipts/m.png");
+        assert_eq!(entries[2].source_path, "/receipts/z.jpg");
+    }
 
     #[test]
     fn detects_image_variants() {

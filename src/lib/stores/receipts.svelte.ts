@@ -47,9 +47,10 @@ class ReceiptStore {
   }
 
   setFiles(newFiles: ReceiptEntry[]) {
-    this.files = newFiles;
-    if (newFiles.length > 0 && this.selectedPaths.size === 0) {
-      this.selectedPaths = new Set([newFiles[0].source_path]);
+    const sorted = [...newFiles].sort((a, b) => a.source_path.localeCompare(b.source_path));
+    this.files = sorted;
+    if (sorted.length > 0 && this.selectedPaths.size === 0) {
+      this.selectedPaths = new Set([sorted[0].source_path]);
     }
   }
 

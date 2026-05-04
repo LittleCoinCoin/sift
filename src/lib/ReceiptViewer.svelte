@@ -674,7 +674,7 @@
 
             <div class="fields-body">
               {#if record && record.fields}
-                {#each Object.entries(record.fields) as [key, value]}
+                {#each Object.entries(record.fields).sort(([a], [b]) => a.localeCompare(b)) as [key, value] (key)}
                   <div class="field-group">
                     <label for="field-{key}">{key.replace(/_/g, ' ')}</label>
                     <input
