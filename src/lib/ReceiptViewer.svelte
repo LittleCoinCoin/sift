@@ -1,3 +1,9 @@
+<script module lang="ts">
+  // Survives mount/unmount so the refresh-on-job-completion effect only fires
+  // on actual transitions, not on every remount of this component.
+  let lastSeenCompletedAt = 0;
+</script>
+
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { save } from '@tauri-apps/plugin-dialog';
@@ -179,7 +185,11 @@
   });
 
   $effect(() => {
-    if (job.completedAt) refreshReceipts();
+    const completedAt = job.completedAt;
+    if (completedAt && completedAt !== lastSeenCompletedAt) {
+      lastSeenCompletedAt = completedAt;
+      receipts.flushPendingCommits().then(() => refreshReceipts());
+    }
   });
 
   async function processSelected() {
@@ -671,7 +681,8 @@
                       id="field-{key}"
                       type="text"
                       value={value}
-                      oninput={(e) => { if (record && record.fields) record.fields[key] = e.currentTarget.value; }}
+                      oninput={(e) => record && receipts.updateField(record.source_path, key, e.currentTarget.value)}
+                      onblur={() => record && receipts.commitField(record.source_path)}
                     />
                   </div>
                 {/each}

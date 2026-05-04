@@ -131,6 +131,17 @@ async fn save_receipt_index(
 }
 
 #[tauri::command]
+async fn update_receipt_fields(
+    app: tauri::AppHandle,
+    source_path: String,
+    fields: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let mut index = receipt_index::load_index(&app).await?;
+    receipt_index::update_entry_fields(&mut index, &source_path, fields)?;
+    receipt_index::save_index(&app, &index).await
+}
+
+#[tauri::command]
 async fn delete_receipt_files(
     app: tauri::AppHandle,
     paths: Vec<String>,
@@ -247,6 +258,7 @@ pub fn run() {
             open_directory_picker,
             load_receipt_index,
             save_receipt_index,
+            update_receipt_fields,
             delete_receipt_files,
             start_job,
             pause_job,
