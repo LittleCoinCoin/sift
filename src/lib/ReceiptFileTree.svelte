@@ -90,7 +90,7 @@
       result = result.filter((e) => filter.statusFilters.includes(e.status));
     }
 
-    return result;
+    return result.slice().sort((a, b) => a.source_path.localeCompare(b.source_path));
   });
 
   $effect(() => {
@@ -143,7 +143,7 @@
             .filter((r) => r.includes('/'))
             .map((r) => dirPath + '/' + r.split('/')[0]),
         ),
-      ];
+      ].sort();
       for (const sub of subDirs) addDir(sub, depth + 1);
     }
 
