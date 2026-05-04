@@ -1,3 +1,6 @@
+import { invoke } from '@tauri-apps/api/core';
+import { showToast } from './log';
+
 export interface ReceiptEntry {
   source_path: string;
   status: 'Unprocessed' | 'Processing' | 'Processed';
@@ -10,6 +13,7 @@ export type EditableField = string;
 class ReceiptStore {
   files = $state<ReceiptEntry[]>([]);
   selectedPaths = $state<Set<string>>(new Set());
+  #pendingCommits = new Map<string, Promise<void>>();
 
   get selectedFile(): ReceiptEntry | null {
     const [first] = this.selectedPaths;
@@ -49,6 +53,36 @@ class ReceiptStore {
     }
   }
 
+  updateField(path: string, key: string, value: string) {
+    const entry = this.files.find(f => f.source_path === path);
+    if (!entry || !entry.fields) return;
+    entry.fields[key] = value;
+  }
+
+  commitField(path: string): Promise<void> {
+    const entry = this.files.find(f => f.source_path === path);
+    if (!entry || !entry.fields) return Promise.resolve();
+    const fields = { ...entry.fields };
+
+    const previous = this.#pendingCommits.get(path) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => invoke<void>('update_receipt_fields', { sourcePath: path, fields }))
+      .catch((e: unknown) => {
+        showToast('error', `Failed to save edits: ${e instanceof Error ? e.message : String(e)}`);
+      })
+      .finally(() => {
+        if (this.#pendingCommits.get(path) === next) {
+          this.#pendingCommits.delete(path);
+        }
+      });
+    this.#pendingCommits.set(path, next);
+    return next;
+  }
+
+  flushPendingCommits(): Promise<void> {
+    return Promise.all([...this.#pendingCommits.values()]).then(() => undefined);
+  }
 }
 
 export const receipts = new ReceiptStore();

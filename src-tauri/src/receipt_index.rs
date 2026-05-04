@@ -46,6 +46,24 @@ pub async fn save_index(app: &AppHandle, index: &ReceiptIndex) -> Result<(), Str
     tokio::fs::rename(&tmp, &path).await.map_err(|e| e.to_string())
 }
 
+pub fn update_entry_fields(
+    index: &mut ReceiptIndex,
+    source_path: &str,
+    fields: HashMap<String, String>,
+) -> Result<(), String> {
+    let entry = index
+        .get_mut(source_path)
+        .ok_or_else(|| format!("No receipt entry for {}", source_path))?;
+    if entry.status != ProcessingStatus::Processed {
+        return Err(format!(
+            "Cannot edit fields for {}: receipt is not in Processed state",
+            source_path
+        ));
+    }
+    entry.fields = Some(fields);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +105,69 @@ mod tests {
         let json = serde_json::to_string(&index).unwrap();
         let back: ReceiptIndex = serde_json::from_str(&json).unwrap();
         assert!(back.is_empty());
+    }
+
+    fn processed_entry(path: &str) -> ReceiptEntry {
+        let mut fields = HashMap::new();
+        fields.insert("vendor".to_string(), "ACME".to_string());
+        fields.insert("total".to_string(), "10.00".to_string());
+        ReceiptEntry {
+            source_path: path.to_string(),
+            status: ProcessingStatus::Processed,
+            fields: Some(fields),
+            source_mtime: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn update_entry_fields_replaces_fields_on_processed_entry() {
+        let mut index: ReceiptIndex = HashMap::new();
+        index.insert("/r/a.jpg".to_string(), processed_entry("/r/a.jpg"));
+
+        let mut new_fields = HashMap::new();
+        new_fields.insert("vendor".to_string(), "Edited".to_string());
+        new_fields.insert("total".to_string(), "12.50".to_string());
+
+        update_entry_fields(&mut index, "/r/a.jpg", new_fields).unwrap();
+
+        let entry = index.get("/r/a.jpg").unwrap();
+        let stored = entry.fields.as_ref().unwrap();
+        assert_eq!(stored.get("vendor").unwrap(), "Edited");
+        assert_eq!(stored.get("total").unwrap(), "12.50");
+        assert_eq!(entry.status, ProcessingStatus::Processed);
+        assert_eq!(entry.source_mtime, 1_700_000_000);
+    }
+
+    #[test]
+    fn update_entry_fields_does_not_touch_other_entries() {
+        let mut index: ReceiptIndex = HashMap::new();
+        index.insert("/r/a.jpg".to_string(), processed_entry("/r/a.jpg"));
+        index.insert("/r/b.jpg".to_string(), processed_entry("/r/b.jpg"));
+
+        let mut new_fields = HashMap::new();
+        new_fields.insert("vendor".to_string(), "Edited".to_string());
+
+        update_entry_fields(&mut index, "/r/a.jpg", new_fields).unwrap();
+
+        let other = index.get("/r/b.jpg").unwrap();
+        assert_eq!(other.fields.as_ref().unwrap().get("vendor").unwrap(), "ACME");
+    }
+
+    #[test]
+    fn update_entry_fields_errors_when_entry_missing() {
+        let mut index: ReceiptIndex = HashMap::new();
+        let err = update_entry_fields(&mut index, "/r/missing.jpg", HashMap::new()).unwrap_err();
+        assert!(err.contains("/r/missing.jpg"));
+    }
+
+    #[test]
+    fn update_entry_fields_errors_when_entry_unprocessed() {
+        let mut index: ReceiptIndex = HashMap::new();
+        let mut entry = processed_entry("/r/a.jpg");
+        entry.status = ProcessingStatus::Unprocessed;
+        index.insert("/r/a.jpg".to_string(), entry);
+
+        let err = update_entry_fields(&mut index, "/r/a.jpg", HashMap::new()).unwrap_err();
+        assert!(err.contains("Processed"));
     }
 }
