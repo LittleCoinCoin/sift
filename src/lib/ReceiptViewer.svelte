@@ -384,6 +384,12 @@
   let resizeStartWidth = 0;
   let resizeMinReached = false;
 
+  // Fields panel resize/toggle state
+  let fieldsWidth = $state(280);
+  let fieldsResizeStartX = 0;
+  let fieldsResizeStartWidth = 0;
+  let fieldsResizeMinReached = false;
+
   function onResizeMove(e: MouseEvent) {
     const delta = e.clientX - resizeStartX;
     const next = resizeStartWidth + delta;
@@ -423,6 +429,40 @@
     resizeMinReached = false;
     window.addEventListener('mousemove', onResizeMove);
     window.addEventListener('mouseup', stopResize);
+  }
+
+  function onFieldsResizeMove(e: MouseEvent) {
+    const delta = fieldsResizeStartX - e.clientX;
+    const next = fieldsResizeStartWidth + delta;
+    if (next < 160) {
+      fieldsResizeMinReached = true;
+    } else {
+      fieldsResizeMinReached = false;
+    }
+    fieldsWidth = Math.max(180, Math.min(600, next));
+  }
+
+  function stopFieldsResize() {
+    window.removeEventListener('mousemove', onFieldsResizeMove);
+    window.removeEventListener('mouseup', stopFieldsResize);
+    if (fieldsResizeMinReached) {
+      setFieldsVisible(activeTabPath, false);
+      fieldsResizeMinReached = false;
+    }
+  }
+
+  function toggleFieldsPanel() {
+    setFieldsVisible(activeTabPath, !(activeTab?.fieldsVisible ?? false));
+  }
+
+  function startFieldsResize(e: MouseEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    fieldsResizeStartX = e.clientX;
+    fieldsResizeStartWidth = fieldsWidth;
+    fieldsResizeMinReached = false;
+    window.addEventListener('mousemove', onFieldsResizeMove);
+    window.addEventListener('mouseup', stopFieldsResize);
   }
 
   // Context menu
@@ -658,18 +698,31 @@
           </div>
         </div>
 
-        <!-- Fields pane / reveal strip -->
+        <!-- Fields panel resize handle -->
+        {#if activeFile}
+          <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
+          <div
+            class="resize-handle"
+            onmousedown={startFieldsResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize fields panel"
+          >
+            <button
+              class="drawer-toggle"
+              onclick={toggleFieldsPanel}
+              onmousedown={(e) => e.stopPropagation()}
+              title={activeTab?.fieldsVisible ? 'Hide fields panel' : 'Show fields panel'}
+              aria-label={activeTab?.fieldsVisible ? 'Hide fields panel' : 'Show fields panel'}
+            >{activeTab?.fieldsVisible ? '›' : '‹'}</button>
+          </div>
+        {/if}
+
+        <!-- Fields pane -->
         {#if activeTab?.fieldsVisible && activeFile}
-          <div class="fields-pane">
+          <div class="fields-pane" style="width: {fieldsWidth}px">
             <div class="fields-header">
               <h2>Receipt Details</h2>
-              <button
-                type="button"
-                class="fields-collapse-btn"
-                onclick={() => setFieldsVisible(activeTabPath, false)}
-                aria-label="Collapse fields panel"
-                title="Collapse fields panel"
-              >›</button>
             </div>
 
             <div class="fields-body">
@@ -695,14 +748,6 @@
               {/if}
             </div>
           </div>
-        {:else if activeFile}
-          <button
-            type="button"
-            class="fields-reveal-strip"
-            onclick={() => setFieldsVisible(activeTabPath, true)}
-            aria-label="Show fields panel"
-            title="Show fields panel"
-          >‹</button>
         {/if}
       </div>
     {/if}
@@ -1128,9 +1173,7 @@
 
   /* ── Fields pane ─────────────────── */
   .fields-pane {
-    width: 280px;
     flex-shrink: 0;
-    border-left: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
     background: var(--color-surface);
@@ -1140,7 +1183,6 @@
   .fields-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: var(--space-2);
     padding: var(--space-4);
     border-bottom: 1px solid var(--color-border);
@@ -1152,65 +1194,6 @@
     font-weight: 600;
     color: var(--color-text);
     margin: 0;
-  }
-
-  .fields-collapse-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    background: none;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--color-text-muted);
-    cursor: pointer;
-    font-size: var(--font-size-md);
-    line-height: 1;
-    flex-shrink: 0;
-    transition: color var(--duration-fast) var(--easing-default),
-                border-color var(--duration-fast) var(--easing-default),
-                background var(--duration-fast) var(--easing-default);
-  }
-
-  .fields-collapse-btn:hover {
-    color: var(--color-text);
-    border-color: var(--color-border);
-    background: var(--color-surface-raised);
-  }
-
-  .fields-collapse-btn:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 1px;
-  }
-
-  .fields-reveal-strip {
-    flex-shrink: 0;
-    width: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: var(--color-surface);
-    border: none;
-    border-left: 1px solid var(--color-border);
-    color: var(--color-text-muted);
-    cursor: pointer;
-    font-size: var(--font-size-sm);
-    line-height: 1;
-    transition: color var(--duration-fast) var(--easing-default),
-                background var(--duration-fast) var(--easing-default);
-  }
-
-  .fields-reveal-strip:hover {
-    color: var(--color-text);
-    background: var(--color-surface-raised);
-  }
-
-  .fields-reveal-strip:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: -2px;
   }
 
   .btn-export {
