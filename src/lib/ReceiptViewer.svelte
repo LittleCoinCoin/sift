@@ -222,7 +222,9 @@
   let exporting = $state(false);
 
   async function exportCsv() {
-    const processed = receipts.files.filter(f => f.status === 'Processed');
+    const processed = receipts.selectedPaths.size > 0
+      ? receipts.files.filter(f => receipts.selectedPaths.has(f.source_path) && f.status === 'Processed')
+      : receipts.files.filter(f => f.status === 'Processed');
     if (processed.length === 0) {
       showToast('warn', 'No processed receipts to export.');
       return;
