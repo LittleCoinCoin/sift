@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModelInfo {
+    /// Model identifier string as returned by the `/models` endpoint (e.g. `"gpt-4o"`).
     pub id: String,
 }
 
@@ -29,6 +30,10 @@ fn validate_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Ping the `/models` endpoint of an OpenAI-compatible API to check reachability.
+///
+/// # Errors
+/// Returns an error string if the URL fails validation or the HTTP request fails.
 #[tauri::command]
 pub async fn ping_endpoint(url: String) -> Result<bool, String> {
     validate_url(&url)?;
@@ -42,6 +47,11 @@ pub async fn ping_endpoint(url: String) -> Result<bool, String> {
         .map_err(|e| e.to_string())
 }
 
+/// List models available at the given OpenAI-compatible endpoint.
+///
+/// # Errors
+/// Returns an error string if the URL fails validation, the HTTP request fails,
+/// the response status is non-2xx, or the response body cannot be parsed as a models list.
 #[tauri::command]
 pub async fn list_models(url: String, key: String) -> Result<Vec<ModelInfo>, String> {
     validate_url(&url)?;

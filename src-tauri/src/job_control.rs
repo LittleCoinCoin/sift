@@ -9,6 +9,7 @@ use tokio::sync::watch;
 
 // === Public types ===
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
@@ -22,6 +23,7 @@ pub enum JobStatus {
     Failed,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileOutcomeStatus {
@@ -32,38 +34,59 @@ pub enum FileOutcomeStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileOutcome {
+    /// Absolute path of the receipt file.
     pub path: String,
+    /// Terminal processing outcome for this file.
     pub status: FileOutcomeStatus,
+    /// `true` when the file was cancelled while an HTTP request was in flight.
     pub in_flight: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
+    /// Absolute path of the receipt file to process.
     pub path: String,
+    /// MIME category string; `"pdf"` or any image type (e.g. `"image"`).
     pub file_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobConfig {
+    /// Ordered list of receipt files to process in this job.
     pub files: Vec<FileEntry>,
+    /// Base URL of the OCR endpoint (OpenAI-compatible).
     pub api_url: String,
+    /// Bearer token for the OCR endpoint.
     pub api_key: String,
+    /// Model identifier to use for OCR requests.
     pub ocr_model: String,
+    /// Base URL of the text extraction endpoint (OpenAI-compatible).
     pub extraction_url: String,
+    /// Bearer token for the extraction endpoint.
     pub extraction_api_key: String,
+    /// Model identifier to use for extraction requests.
     pub extraction_model: String,
+    /// Resolved system prompt text sent to the extraction model.
     pub active_system_prompt: String,
+    /// Ordered list of field names to extract into the output JSON object.
     pub json_schema_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobSummary {
+    /// Unique job identifier (e.g. `"job_1"`).
     pub job_id: String,
+    /// Current or terminal status of the job.
     pub status: JobStatus,
+    /// Total number of files submitted to this job.
     pub total: u32,
+    /// Number of files successfully processed.
     pub processed: u32,
+    /// Number of files abandoned due to cancellation.
     pub abandoned: u32,
+    /// Number of files that encountered a processing error.
     pub failed: u32,
+    /// Per-file outcome records in processing order.
     pub files: Vec<FileOutcome>,
 }
 
@@ -85,15 +108,25 @@ struct JobStatusEvent {
 // === Job handle ===
 
 pub struct JobHandle {
+    /// Live status of the job; updated by both the orchestrator and the control methods.
     pub status: Arc<Mutex<JobStatus>>,
+    /// Unique job identifier (e.g. `"job_1"`).
     pub job_id: String,
+    // Tauri app handle used to emit events.
     app: AppHandle,
+    // Channel for sending pause/resume/cancel signals to the orchestrator task.
     ctrl_tx: watch::Sender<ControlSignal>,
+    // Number of files that completed successfully.
     processed: Arc<AtomicU32>,
+    // Number of files abandoned due to cancellation.
     abandoned: Arc<AtomicU32>,
+    // Number of files that encountered a processing error.
     failed: Arc<AtomicU32>,
+    // Total number of files in the job.
     total: u32,
+    // Per-file outcome records accumulated by the orchestrator.
     outcomes: Arc<Mutex<Vec<FileOutcome>>>,
+    // Handle to the spawned orchestrator task; kept alive for its lifetime.
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -126,6 +159,7 @@ impl JobHandle {
     pub fn cancel(&self) -> Result<(), String> {
         let mut status = self.status.lock().map_err(|e| e.to_string())?;
         match *status {
+            // EXPLICIT: Running and Paused are the only cancellable states; body intentionally empty
             JobStatus::Running | JobStatus::Paused => {}
             _ => return Err(format!("Job cannot be cancelled (status: {:?})", *status)),
         }
@@ -138,6 +172,7 @@ impl JobHandle {
         Ok(())
     }
 
+    #[must_use]
     pub fn summary(&self) -> JobSummary {
         JobSummary {
             job_id: self.job_id.clone(),
@@ -173,6 +208,7 @@ fn new_job_id() -> String {
 
 pub fn spawn_job(app: AppHandle, config: JobConfig) -> JobHandle {
     let job_id = new_job_id();
+    // CAST: usize → u32, file count fits in u32 in practice (no job has 4 billion files)
     let total = config.files.len() as u32;
     let status = Arc::new(Mutex::new(JobStatus::Running));
     let processed = Arc::new(AtomicU32::new(0));
@@ -240,6 +276,7 @@ fn flush_remaining_abandoned(
 /// re-queue semantics (spec AC #9, #9b) can be exercised in unit tests with a
 /// fake processor — `run_job` itself remains the production wiring that talks
 /// to `tauri::AppHandle`, `process_receipt`, and the on-disk receipt index.
+#[allow(clippy::too_many_arguments)]
 async fn run_file_loop<P, Fut, S, A>(
     files: &[FileEntry],
     mut ctrl_rx: watch::Receiver<ControlSignal>,
@@ -268,6 +305,7 @@ where
             let sig = ctrl_rx.borrow_and_update().clone();
             match sig {
                 ControlSignal::Cancel => {
+                    // INDEX: idx is bounded by `while idx < files.len()`
                     flush_remaining_abandoned(&files[idx..], &outcomes, &abandoned_count);
                     return LoopExit::Cancelled;
                 }
@@ -278,6 +316,7 @@ where
                     }
                     let next = ctrl_rx.borrow_and_update().clone();
                     if next == ControlSignal::Cancel {
+                        // INDEX: idx is bounded by `while idx < files.len()`
                         flush_remaining_abandoned(&files[idx..], &outcomes, &abandoned_count);
                         return LoopExit::Cancelled;
                     }
@@ -324,6 +363,7 @@ where
                         status: FileOutcomeStatus::Abandoned,
                         in_flight: true,
                     });
+                    // INDEX: idx < files.len() (loop condition), so idx + 1 <= files.len()
                     flush_remaining_abandoned(&files[idx + 1..], &outcomes, &abandoned_count);
                     return LoopExit::Cancelled;
                 }
@@ -338,6 +378,7 @@ where
     LoopExit::Completed
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_job(
     app: AppHandle,
     job_id: String,
@@ -353,11 +394,13 @@ async fn run_job(
     use crate::receipt_index::{load_index, save_index, ProcessingStatus, ReceiptEntry};
     use crate::scan::ReceiptFile;
 
+    // CAST: usize → u32, file count fits in u32 in practice (no job has 4 billion files)
     let total = config.files.len() as u32;
     let elapsed_sum: Arc<Mutex<f64>> = Arc::new(Mutex::new(0.0));
     let config = Arc::new(config);
     let files = config.files.clone();
 
+    // CAST: u128 → u64, milliseconds since Unix epoch fit in u64 until year 584,942,417
     let job_started_at: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -381,6 +424,7 @@ async fn run_job(
             let elapsed_sum = Arc::clone(&elapsed_sum);
             let job_id = job_id.clone();
             async move {
+                // CAST: u128 → u64, milliseconds since Unix epoch fit in u64 until year 584,942,417
                 let file_started_at: u64 = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -395,6 +439,7 @@ async fn run_job(
                 let done_so_far = processed_count.load(Ordering::Relaxed);
                 let avg_so_far = {
                     let s = *elapsed_sum.lock().unwrap();
+                    // CAST: u32 → f64, lossless for all u32 values
                     if done_so_far > 0 { s / done_so_far as f64 } else { 0.0 }
                 };
 
@@ -451,6 +496,7 @@ async fn run_job(
                     &config.json_schema_keys,
                 ).await {
                     Ok(record) => {
+                        // CAST: u128 → f64, elapsed millis are small; precision loss is acceptable for averaging
                         let elapsed_ms = start.elapsed().as_millis() as f64;
                         match load_index(&app).await {
                             Ok(mut index) => {
@@ -475,6 +521,7 @@ async fn run_job(
                             *s += elapsed_ms;
                             *s
                         };
+                        // CAST: u32 → f64, lossless for all u32 values
                         let avg_ms = new_sum / new_done as f64;
 
                         emit_log(&app, LogLevel::Success, format!("Processed {}", path));
@@ -547,6 +594,7 @@ async fn run_job(
     *status.lock().unwrap() = final_status.clone();
 
     let elapsed_total = *elapsed_sum.lock().unwrap();
+    // CAST: u32 → f64, lossless for all u32 values
     let avg_ms = if processed > 0 { elapsed_total / processed as f64 } else { 0.0 };
     let completion_status_str = match &final_status {
         JobStatus::Failed => "failed",
@@ -580,6 +628,7 @@ async fn run_job(
     let _ = app.emit("job_done", &summary);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_terminal_cancelled(
     app: &AppHandle,
     job_id: &str,

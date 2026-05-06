@@ -18,7 +18,9 @@ pub fn init_pdfium_path(path: PathBuf) {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReceiptRecord {
+    /// Absolute path of the source receipt file on disk.
     pub source_path: String,
+    /// Extracted key-value pairs, keyed by schema field name.
     pub fields: HashMap<String, String>,
 }
 
@@ -90,9 +92,10 @@ fn validate_url(url: &str, purpose: &str) -> Result<()> {
 }
 
 /// Extract the first JSON object `{...}` from `s`, skipping any markdown fences.
+///
 /// Returns the substring from the first `{` to the last `}`, inclusive.
 /// Returns an empty string if no `{` or `}` is found.
-
+#[must_use]
 pub fn extract_json(s: &str) -> String {
     let start = match s.find('{') {
         Some(i) => i,
@@ -105,10 +108,17 @@ pub fn extract_json(s: &str) -> String {
     if end < start {
         return String::new();
     }
+    // INDEX: start/end are byte offsets returned by str::find/rfind on `s`, always valid UTF-8 boundaries
     s[start..=end].to_string()
 }
 
 /// Phase 1: send the file image to the OCR model and return the raw transcript.
+///
+/// Returns `(source_path, markdown_transcript)`.
+///
+/// # Errors
+/// Returns an error if URL validation fails, the file cannot be read or rendered,
+/// the HTTP request fails, the response is non-2xx, or the response body is empty.
 pub async fn ocr_receipt(
     file: ReceiptFile,
     api_url: &str,
@@ -181,6 +191,11 @@ pub async fn ocr_receipt(
 }
 
 /// Phase 2: send the OCR transcript to the extraction model and return parsed fields.
+///
+/// # Errors
+/// Returns an error if URL validation fails, the HTTP request fails, the response
+/// is non-2xx, or the response body is empty. JSON parse failures are non-fatal
+/// and produce a record with empty field values.
 pub async fn extract_fields(
     markdown: String,
     source_path: String,
@@ -268,6 +283,11 @@ pub async fn extract_fields(
 /// Convenience wrapper: validates both URLs upfront, then runs OCR → extraction
 /// in sequence. Used by integration tests and any caller that does not need
 /// per-phase progress events.
+///
+/// # Errors
+/// Returns an error if either URL fails validation, or if the OCR or extraction
+/// step returns an error (see [`ocr_receipt`] and [`extract_fields`]).
+#[allow(clippy::too_many_arguments)]
 pub async fn process_receipt(
     file: ReceiptFile,
     api_url: &str,
@@ -304,6 +324,11 @@ fn image_mime(ext: &str) -> &'static str {
     }
 }
 
+/// Render the first page of a PDF file to a PNG byte buffer at up to 1200×1800 px.
+///
+/// # Errors
+/// Returns an error if the `pdfium` library cannot be loaded, the PDF cannot be
+/// opened, the first page cannot be retrieved or rendered, or PNG encoding fails.
 pub fn render_pdf_first_page(path: &std::path::Path) -> Result<Vec<u8>> {
     use pdfium_render::prelude::*;
 

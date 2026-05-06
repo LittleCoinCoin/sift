@@ -9,29 +9,41 @@ pub const DEFAULT_SYSTEM_PROMPT_CONTENT: &str = "You are a data extraction assis
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SystemPrompt {
+    /// Stable identifier for this prompt (e.g. `"default-v1"`).
     pub id: String,
+    /// Human-readable display name shown in the UI.
     pub name: String,
+    /// Prompt text; may contain the `{schema_keys}` placeholder.
     pub content: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
+    /// Base URL of the OCR endpoint (OpenAI-compatible).
     #[serde(default)]
     pub url: String,
+    /// Model identifier for OCR requests. Deserialized from the legacy `"model"` key.
     #[serde(alias = "model", default)]
     pub ocr_model: String,
+    /// Base URL of the text extraction endpoint (OpenAI-compatible).
     #[serde(default)]
     pub extraction_url: String,
+    /// Model identifier for extraction requests.
     #[serde(default)]
     pub extraction_model: String,
+    /// Legacy single receipt directory; migrated to `receipt_dirs` on first load.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub receipt_dir: String,
+    /// Ordered list of directories to scan for receipt files.
     #[serde(default)]
     pub receipt_dirs: Vec<String>,
+    /// Ordered list of field names to extract. Deserialized from the legacy `"csv_columns"` key.
     #[serde(default, alias = "csv_columns")]
     pub json_schema_keys: Vec<String>,
+    /// All configured system prompts; defaults to a single built-in prompt.
     #[serde(default = "default_system_prompts")]
     pub system_prompts: Vec<SystemPrompt>,
+    /// `id` of the currently active system prompt from `system_prompts`.
     #[serde(default = "default_active_system_prompt_id")]
     pub active_system_prompt_id: String,
 }
@@ -71,6 +83,13 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e: tauri::Error| e.to_string())
 }
 
+/// Load settings from the app data directory, applying field migrations.
+///
+/// Returns default settings if the file does not yet exist.
+///
+/// # Errors
+/// Returns an error string if the app data path cannot be resolved, the file
+/// cannot be read, or the JSON cannot be deserialized.
 #[tauri::command]
 pub fn get_settings(app: AppHandle) -> Result<Settings, String> {
     let path = settings_path(&app)?;
@@ -85,6 +104,11 @@ pub fn get_settings(app: AppHandle) -> Result<Settings, String> {
     Ok(settings)
 }
 
+/// Persist settings to the app data directory.
+///
+/// # Errors
+/// Returns an error string if the app data path cannot be resolved, the parent
+/// directory cannot be created, JSON serialization fails, or the write fails.
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     let path = settings_path(&app)?;
