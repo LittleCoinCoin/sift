@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum ReceiptFile {
     Image(PathBuf),
@@ -11,6 +12,8 @@ pub enum ReceiptFile {
 }
 
 impl ReceiptFile {
+    /// Return the filesystem path of the receipt file.
+    #[must_use]
     pub fn path(&self) -> &Path {
         match self {
             ReceiptFile::Image(p) | ReceiptFile::Pdf(p) => p.as_path(),
@@ -18,6 +21,10 @@ impl ReceiptFile {
     }
 }
 
+/// List all receipt files (images and PDFs) directly inside `dir` (non-recursive).
+///
+/// # Errors
+/// Returns an error if the directory cannot be read or an entry's metadata cannot be accessed.
 pub fn list_receipts(dir: &Path) -> Result<Vec<ReceiptFile>> {
     let mut receipts = Vec::new();
     for entry in fs::read_dir(dir)? {
@@ -37,6 +44,7 @@ pub fn list_receipts(dir: &Path) -> Result<Vec<ReceiptFile>> {
             Some("pdf") => {
                 receipts.push(ReceiptFile::Pdf(path));
             }
+            // EXPLICIT: all other extensions are silently skipped
             _ => {}
         }
     }

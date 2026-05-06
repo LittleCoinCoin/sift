@@ -2,6 +2,7 @@ use crate::receipt::ReceiptRecord;
 use anyhow::Result;
 use std::path::Path;
 
+#[must_use]
 pub fn default_keys() -> Vec<String> {
     Vec::new()
 }

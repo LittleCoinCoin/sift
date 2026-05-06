@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProcessingStatus {
     Unprocessed,
@@ -11,9 +12,13 @@ pub enum ProcessingStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceiptEntry {
+    /// Absolute path of the source receipt file on disk. Used as the index key.
     pub source_path: String,
+    /// Current processing state of the receipt.
     pub status: ProcessingStatus,
+    /// Extracted key-value fields; `None` until the receipt has been processed.
     pub fields: Option<HashMap<String, String>>,
+    /// Last-modified time of the source file as Unix seconds; `0` if unavailable.
     pub source_mtime: u64,
 }
 
@@ -26,6 +31,13 @@ fn index_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Load the persisted receipt index from the app data directory.
+///
+/// Returns an empty index if the file does not yet exist.
+///
+/// # Errors
+/// Returns an error string if the app data path cannot be resolved, the file
+/// cannot be read, or the JSON cannot be deserialized.
 pub async fn load_index(app: &AppHandle) -> Result<ReceiptIndex, String> {
     let path = index_path(app)?;
     if !path.exists() {
@@ -35,6 +47,11 @@ pub async fn load_index(app: &AppHandle) -> Result<ReceiptIndex, String> {
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
+/// Persist the receipt index to the app data directory atomically via a `.tmp` rename.
+///
+/// # Errors
+/// Returns an error string if the app data path cannot be resolved, the parent
+/// directory cannot be created, JSON serialization fails, or the write or rename fails.
 pub async fn save_index(app: &AppHandle, index: &ReceiptIndex) -> Result<(), String> {
     let path = index_path(app)?;
     if let Some(parent) = path.parent() {
@@ -46,6 +63,11 @@ pub async fn save_index(app: &AppHandle, index: &ReceiptIndex) -> Result<(), Str
     tokio::fs::rename(&tmp, &path).await.map_err(|e| e.to_string())
 }
 
+/// Replace the stored fields of a processed receipt entry.
+///
+/// # Errors
+/// Returns an error string if no entry exists for `source_path`, or if the
+/// entry's status is not [`ProcessingStatus::Processed`].
 pub fn update_entry_fields(
     index: &mut ReceiptIndex,
     source_path: &str,
