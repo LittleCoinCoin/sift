@@ -62,8 +62,14 @@
 
 {#if job.state.case === 'cancelConfirming'}
   {@const s = job.state.summary}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="backdrop" onclick={() => job.dismissCancelConfirm()}>
+  <div
+    class="backdrop"
+    role="button"
+    tabindex="0"
+    onclick={() => job.dismissCancelConfirm()}
+    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); job.dismissCancelConfirm(); } }}
+    aria-label="Close modal"
+  >
     <div
       bind:this={modalEl}
       class="modal"
@@ -72,6 +78,7 @@
       aria-label="Cancel job confirmation"
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
     >
       <div class="modal-header">
         <span class="modal-title">Cancel Job?</span>

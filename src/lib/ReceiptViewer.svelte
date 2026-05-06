@@ -30,7 +30,7 @@
   let isDragging = $state(false);
   let dragStartX = $state(0);
   let dragStartY = $state(0);
-  let imagePane: HTMLDivElement;
+  let imagePane = $state<HTMLDivElement | undefined>(undefined);
 
   // Settings
   interface SystemPrompt {
@@ -249,6 +249,7 @@
   // Pan/zoom handlers
   function onImageLoad(e: Event) {
     const img = e.currentTarget as HTMLImageElement;
+    if (!imagePane) return;
     const rect = imagePane.getBoundingClientRect();
     const paneW = rect.width;
     const paneH = rect.height;
@@ -266,6 +267,7 @@
 
   function onWheel(e: WheelEvent) {
     e.preventDefault();
+    if (!imagePane) return;
     const rect = imagePane.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -554,13 +556,20 @@
     </div>
   </aside>
 
-  <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
   <div
     class="resize-handle"
     onmousedown={startResize}
-    role="separator"
+    onkeydown={(e) => {
+      if (e.key === 'ArrowLeft') { sidebarWidth = Math.max(180, Math.min(480, sidebarWidth - 4)); }
+      else if (e.key === 'ArrowRight') { sidebarWidth = Math.max(180, Math.min(480, sidebarWidth + 4)); }
+    }}
+    role="slider"
+    tabindex="0"
     aria-orientation="vertical"
     aria-label="Resize sidebar"
+    aria-valuenow={sidebarWidth}
+    aria-valuemin={180}
+    aria-valuemax={480}
   >
     <button
       class="drawer-toggle"
@@ -700,13 +709,20 @@
 
         <!-- Fields panel resize handle -->
         {#if activeFile}
-          <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
           <div
             class="resize-handle"
             onmousedown={startFieldsResize}
-            role="separator"
+            onkeydown={(e) => {
+              if (e.key === 'ArrowLeft') { fieldsWidth = Math.max(180, Math.min(600, fieldsWidth + 4)); }
+              else if (e.key === 'ArrowRight') { fieldsWidth = Math.max(180, Math.min(600, fieldsWidth - 4)); }
+            }}
+            role="slider"
+            tabindex="0"
             aria-orientation="vertical"
             aria-label="Resize fields panel"
+            aria-valuenow={fieldsWidth}
+            aria-valuemin={180}
+            aria-valuemax={600}
           >
             <button
               class="drawer-toggle"
