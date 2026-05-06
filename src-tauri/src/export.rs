@@ -1,5 +1,6 @@
 use crate::receipt::ReceiptRecord;
 use anyhow::Result;
+use std::io::Write as _;
 use std::path::Path;
 
 #[must_use]
@@ -12,7 +13,11 @@ pub fn export_csv(
     keys: Vec<String>,
     output_path: &Path,
 ) -> Result<()> {
-    let mut wtr = csv::Writer::from_path(output_path)?;
+    let mut file = std::fs::File::create(output_path)?;
+    // UTF-8 BOM so Excel recognises the encoding instead of falling back to
+    // the system locale, which garbles Japanese/accented characters.
+    file.write_all(b"\xEF\xBB\xBF")?;
+    let mut wtr = csv::Writer::from_writer(file);
     wtr.write_record(&keys)?;
     for record in &records {
         let row: Vec<String> = keys
@@ -39,6 +44,12 @@ mod tests {
         ReceiptRecord { source_path: path.to_string(), fields }
     }
 
+    fn read_csv_bytes(path: &std::path::Path) -> Vec<u8> {
+        let bytes = std::fs::read(path).unwrap();
+        // Strip the UTF-8 BOM that export_csv writes for Excel compatibility.
+        if bytes.starts_with(b"\xEF\xBB\xBF") { bytes[3..].to_vec() } else { bytes }
+    }
+
     #[test]
     fn exports_schema_keys() {
         let dir = tempdir().unwrap();
@@ -50,8 +61,8 @@ mod tests {
         let keys = vec!["date".to_string(), "amount".to_string()];
         export_csv(records, keys, &out).unwrap();
 
-        let content = std::fs::read_to_string(&out).unwrap();
-        let mut rdr = csv::Reader::from_reader(content.as_bytes());
+        let content = read_csv_bytes(&out);
+        let mut rdr = csv::Reader::from_reader(content.as_slice());
         let headers: Vec<String> = rdr
             .headers()
             .unwrap()
@@ -73,10 +84,19 @@ mod tests {
         let keys = vec!["date".to_string(), "notes".to_string()];
         export_csv(records, keys, &out).unwrap();
 
-        let content = std::fs::read_to_string(&out).unwrap();
-        let mut rdr = csv::Reader::from_reader(content.as_bytes());
+        let content = read_csv_bytes(&out);
+        let mut rdr = csv::Reader::from_reader(content.as_slice());
         let rows: Vec<csv::StringRecord> = rdr.records().map(|r| r.unwrap()).collect();
         assert_eq!(rows[0].get(1).unwrap(), "");
+    }
+
+    #[test]
+    fn output_starts_with_utf8_bom() {
+        let dir = tempdir().unwrap();
+        let out = dir.path().join("out.csv");
+        export_csv(vec![], vec!["date".to_string()], &out).unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(bytes.starts_with(b"\xEF\xBB\xBF"), "missing UTF-8 BOM for Excel");
     }
 
     #[test]
@@ -85,8 +105,8 @@ mod tests {
         let out = dir.path().join("out.csv");
         export_csv(vec![], vec!["date".to_string()], &out).unwrap();
 
-        let content = std::fs::read_to_string(&out).unwrap();
-        let mut rdr = csv::Reader::from_reader(content.as_bytes());
+        let content = read_csv_bytes(&out);
+        let mut rdr = csv::Reader::from_reader(content.as_slice());
         let rows: Vec<csv::StringRecord> = rdr.records().map(|r| r.unwrap()).collect();
         assert_eq!(rows.len(), 0);
     }
