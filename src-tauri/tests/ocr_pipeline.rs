@@ -21,8 +21,8 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use receipt_ocr_lib::receipt::{process_receipt, ReceiptRecord};
-use receipt_ocr_lib::scan::ReceiptFile;
+use sift_lib::receipt::{process_receipt, ReceiptRecord};
+use sift_lib::scan::ReceiptFile;
 use serde_json::json;
 use tempfile::TempDir;
 use wiremock::matchers::{header, method, path};
