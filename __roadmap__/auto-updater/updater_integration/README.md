@@ -20,8 +20,8 @@ Wire the updater plugin into both the Rust backend (plugin + menu) and the Svelt
 ## Status
 ```mermaid
 graph TD
-    rust_plugin[Register Updater Plugin and Native Menu]:::planned
-    updater_store[Implement Updater Store and Wire into App]:::planned
+    rust_plugin[Register Updater Plugin and Native Menu]:::inprogress
+    updater_store[Implement Updater Store and Wire into App]:::inprogress
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -32,8 +32,8 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `rust_plugin.md` | 📄 Leaf Task | ⬜ Planned |
-| `updater_store.md` | 📄 Leaf Task | ⬜ Planned |
+| `rust_plugin.md` | 📄 Leaf Task | 🔄 In Progress |
+| `updater_store.md` | 📄 Leaf Task | 🔄 In Progress |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |
