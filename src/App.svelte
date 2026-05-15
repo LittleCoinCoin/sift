@@ -9,6 +9,7 @@
   import CancelSummaryModal from './lib/CancelSummaryModal.svelte';
   import { initLogStore } from './lib/stores/log';
   import { initJobStore } from './lib/stores/job.svelte';
+  import { initUpdaterStore } from './lib/stores/updater.svelte';
   // @ts-ignore
   import './lib/tokens.css';
   // @ts-ignore
@@ -16,7 +17,7 @@
 
   let showSettings = $state(false);
 
-  onMount(() => { initLogStore(); initJobStore(); });
+  onMount(() => { initLogStore(); initJobStore(); initUpdaterStore(); });
 </script>
 
 <Caustics />
