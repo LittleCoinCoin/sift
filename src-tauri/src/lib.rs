@@ -237,6 +237,7 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol("receipt", |_ctx, request, responder| {
             handle_receipt_uri(request, responder);
         })
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(job_control::JobRegistry::default())
