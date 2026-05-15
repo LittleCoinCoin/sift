@@ -10,6 +10,7 @@ mod settings;
 
 use logger::{emit_log, LogLevel};
 use receipt::ReceiptRecord;
+use tauri::Emitter;
 
 
 #[tauri::command]
@@ -232,7 +233,31 @@ pub fn run() {
                 app.path().resource_dir()?.join(lib_name)
             };
             receipt::init_pdfium_path(dylib_path);
+
+            #[cfg(target_os = "macos")]
+            {
+                let check_for_updates =
+                    tauri::menu::MenuItemBuilder::with_id("check_for_updates", "Check for Updates\u{2026}")
+                        .build(app)?;
+                let sift_menu = tauri::menu::SubmenuBuilder::new(app, "Sift")
+                    .item(&check_for_updates)
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?;
+                let menu = tauri::menu::Menu::with_items(app, &[&sift_menu])?;
+                app.set_menu(menu)?;
+            }
+
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id().0 == "check_for_updates" {
+                let _ = app.emit("check-for-updates", ());
+            }
         })
         .register_asynchronous_uri_scheme_protocol("receipt", |_ctx, request, responder| {
             handle_receipt_uri(request, responder);
