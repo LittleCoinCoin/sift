@@ -33,7 +33,7 @@ graph TD
     ci_signing[Add CI Signing Secrets]:::done
     tauri_config[Configure Updater Plugin in tauri.conf.json]:::done
     toast_extension[Extend Toast System for Action Buttons]:::done
-    updater_integration[Updater Integration]:::planned
+    updater_integration[Updater Integration]:::done
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -48,7 +48,7 @@ graph TD
 | `ci_signing.md` | 📄 Leaf Task | ✅ Done |
 | `tauri_config.md` | 📄 Leaf Task | ✅ Done |
 | `toast_extension.md` | 📄 Leaf Task | ✅ Done |
-| `updater_integration/` | 📁 Directory | ⬜ Planned |
+| `updater_integration/` | 📁 Directory | ✅ Done |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |

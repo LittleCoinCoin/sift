@@ -20,8 +20,8 @@ Wire the updater plugin into both the Rust backend (plugin + menu) and the Svelt
 ## Status
 ```mermaid
 graph TD
-    rust_plugin[Register Updater Plugin and Native Menu]:::inprogress
-    updater_store[Implement Updater Store and Wire into App]:::inprogress
+    rust_plugin[Register Updater Plugin and Native Menu]:::done
+    updater_store[Implement Updater Store and Wire into App]:::done
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -32,8 +32,8 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `rust_plugin.md` | 📄 Leaf Task | 🔄 In Progress |
-| `updater_store.md` | 📄 Leaf Task | 🔄 In Progress |
+| `rust_plugin.md` | 📄 Leaf Task | ✅ Done |
+| `updater_store.md` | 📄 Leaf Task | ✅ Done |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |
@@ -42,3 +42,5 @@ graph TD
 ## Progress
 | Node | Branch | Commits | Notes |
 |:-----|:-------|:--------|:------|
+| `rust_plugin.md` | `worktree-agent-a07e4a209ca7c7d77` | 2 | `cargo build` + `cargo clippy` clean; BLOCKED: behavioral gates need running app |
+| `updater_store.md` | `worktree-agent-a8dd5a794af8e3297` | 4 | All `pnpm check` gates PASS; BLOCKED: end-to-end toast flow needs running dev server |
