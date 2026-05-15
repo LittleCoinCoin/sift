@@ -1,12 +1,40 @@
 import { listen } from '@tauri-apps/api/event';
-import { check } from '@tauri-apps/plugin-updater';
-import { showToast, showToastReturningId } from './log';
+import { check, type Update } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
+import { showToast, showToastReturningId, updateToastMessage, dismissToast } from './log';
 
 let _initialized = false;
 
-// stub — startDownload implemented in Step 3
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function startDownload(_update: any): Promise<void> {}
+async function startDownload(update: Update): Promise<void> {
+  const id = showToastReturningId('info', 'Downloading update…', { persistent: true });
+  let downloaded = 0;
+  let contentLength: number | undefined;
+
+  try {
+    await update.downloadAndInstall((event) => {
+      if (event.event === 'Started') {
+        contentLength = event.data.contentLength;
+      } else if (event.event === 'Progress') {
+        downloaded += event.data.chunkLength;
+        if (contentLength !== undefined) {
+          updateToastMessage(
+            id,
+            `Downloading update… ${Math.round((downloaded / contentLength) * 100)}%`,
+          );
+        }
+      } else if (event.event === 'Finished') {
+        dismissToast(id);
+        showToastReturningId('success', 'Update ready — restart to apply', {
+          persistent: true,
+          action: { label: 'Restart Now', onClick: () => relaunch() },
+        });
+      }
+    });
+  } catch (err) {
+    dismissToast(id);
+    showToast('error', String(err));
+  }
+}
 
 async function checkForUpdates(explicit: boolean): Promise<void> {
   try {
