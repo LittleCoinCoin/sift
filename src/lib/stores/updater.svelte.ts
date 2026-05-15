@@ -4,11 +4,16 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { showToast, showToastReturningId, updateToastMessage, dismissToast } from './log';
 
 let _initialized = false;
+let _downloadInProgress = false; // guard against concurrent Install clicks
 
 async function startDownload(update: Update): Promise<void> {
+  if (_downloadInProgress) return;
+  _downloadInProgress = true;
+
   const id = showToastReturningId('info', 'Downloading update…', { persistent: true });
   let downloaded = 0;
   let contentLength: number | undefined;
+  let isFinished = false;
 
   try {
     await update.downloadAndInstall((event) => {
@@ -21,18 +26,37 @@ async function startDownload(update: Update): Promise<void> {
             id,
             `Downloading update… ${Math.round((downloaded / contentLength) * 100)}%`,
           );
+        } else {
+          // server sent no Content-Length — show bytes instead of percentage
+          updateToastMessage(id, `Downloading update… ${Math.round(downloaded / 1024)} KB`);
         }
       } else if (event.event === 'Finished') {
+        isFinished = true;
         dismissToast(id);
         showToastReturningId('success', 'Update ready — restart to apply', {
           persistent: true,
-          action: { label: 'Restart Now', onClick: () => relaunch() },
+          action: {
+            label: 'Restart Now',
+            onClick: async () => {
+              try {
+                await relaunch();
+              } catch (err) {
+                showToast('error', `Restart failed: ${String(err)}`);
+              }
+            },
+          },
         });
       }
     });
   } catch (err) {
-    dismissToast(id);
-    showToast('error', String(err));
+    // Only dismiss/error if Finished never fired — avoids clobbering the
+    // success toast in the unlikely case the promise rejects after Finished.
+    if (!isFinished) {
+      dismissToast(id);
+      showToast('error', String(err));
+    }
+  } finally {
+    _downloadInProgress = false;
   }
 }
 
@@ -47,9 +71,10 @@ async function checkForUpdates(explicit: boolean): Promise<void> {
     } else if (explicit) {
       showToast('info', 'Sift is up to date.');
     }
-  } catch {
+  } catch (err) {
+    console.error('[updater] check() threw:', err);
     if (explicit) {
-      showToast('warn', 'Could not reach update server.');
+      showToast('warn', String(err));
     }
     // background check failure silently swallowed
   }
