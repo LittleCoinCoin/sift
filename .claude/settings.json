@@ -1,15 +1,1 @@
-{
-  "hooks": {
-    "WorktreeCreate": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_create.py\"",
-            "statusMessage": "Creating worktree and symlinking pdfium library…"
-          }
-        ]
-      }
-    ]
-  }
-}
+{}
