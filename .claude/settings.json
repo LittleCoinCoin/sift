@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree-create.sh\"",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_create.py\"",
             "statusMessage": "Creating worktree and symlinking pdfium library…"
           }
         ]
