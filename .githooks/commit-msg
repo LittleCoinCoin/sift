@@ -8,5 +8,14 @@ if ! command -v uvx >/dev/null 2>&1; then
     echo "for example: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
     exit 1
 fi
+# commitizen strips the message before matching, so a leading space (which git
+# keeps and which would hide the type from the bump scan) is only visible here.
+first=$(awk '!/^#/ && NF { print; exit }' "$1")
+case "$first" in
+    [[:space:]]*)
+        echo "commit-msg: the subject must not start with whitespace: \"$first\"" >&2
+        exit 1
+        ;;
+esac
 cd "$(git rev-parse --show-toplevel)" || exit 1
 exec uvx --from commitizen==4.19.1 cz check --allow-abort --commit-msg-file "$1"

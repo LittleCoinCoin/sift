@@ -3,6 +3,8 @@
 # subjects that must be rejected, via `cz check --message`. `cz check
 # --rev-range` only ever sees commits that already passed, so it cannot show a
 # rejection; this probe exercises the reject path. Config lives in .cz.toml.
+# A leading space is not probed here: cz strips the message before matching, so
+# only .githooks/commit-msg can reject it.
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -35,6 +37,13 @@ ACCEPT=(
     "fix(toast): keep persistent toasts on top"
     "Merge pull request #5 from a/b"
     "Merge task/a into milestone/b"
+    "Merge pull request #12 from LittleCoinCoin/task/x"
+    "Merge branch 'main' into x"
+    "Revert \"feat(x): y\""
+    "fixup! feat(x): y"
+    "amend! feat(x): y"
+    "Initial commit"
+    $'docs(x): why this exists\n\nProse explaining the reason.\n\nBREAKING CHANGE: the flag is gone\n\nCo-Authored-By: A <a@example.com>'
 )
 
 REJECT=(
@@ -47,6 +56,12 @@ REJECT=(
     "style(x): unknown type"
     "chore(x_y): non-kebab scope"
     "wip"
+    "chore(x-): scope ends in a hyphen"
+    "Mergefoo into bar"
+    "Reverting the thing"
+    $'docs(x): a\nbody without a blank line'
+    $'docs(x): a\n\nfeat(y): hidden typed body line'
+    $'rdm(x): a\n\nProse.\n  fix(y)!: indented typed body line'
     "$LONG"
 )
 
