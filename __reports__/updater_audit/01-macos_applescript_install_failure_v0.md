@@ -78,3 +78,8 @@ AppleScript prompt is returned as `Failed to move the new app into place` (an
 matches that string as well as the strings listed in this report. The optional
 pre-flight check was not implemented. The rollback concern (temp backup left
 unreferenced) is not addressed by this change.
+
+The classifier test (`src/lib/stores/updater-errors.test.ts`) is excluded from
+`tsconfig.json` because the node types it needs (`node:test`, `node:assert`) are not
+available to `svelte-check` and no dependency may be added; node 24 strips the
+TypeScript types natively, so `node --test` runs it directly.
