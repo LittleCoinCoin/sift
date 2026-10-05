@@ -10,37 +10,40 @@ major_version_zero = true
 # The root package.json is the canonical version; the other manifests follow it
 # through version_files.
 version_provider = "npm"
-version_files = [
-    "src-tauri/Cargo.toml:^version =",
-    # Cargo.lock records this crate's own version too. The pattern below never
-    # contains a version string, so commitizen rewrites nothing here, but it
-    # stages every listed file after the pre-bump hook has re-locked, which is
-    # what puts the refreshed lock into the release commit.
-    "src-tauri/Cargo.lock:^name = \"sift\"$",
-]
+# Cargo.lock needs no entry: `cargo update -w` (pre_bump_hooks) re-locks after
+# the version files are rewritten, and cz commits the release with `git commit -a`.
+version_files = ["src-tauri/Cargo.toml:^version ="]
 pre_bump_hooks = ["cargo update -w --manifest-path src-tauri/Cargo.toml"]
 bump_message = "release(sift): v$new_version"
 update_changelog_on_bump = true
 changelog_incremental = true
 changelog_start_rev = "v0.1.4"
-# commitizen's defaults, plus GitHub's machine-written root commit.
-allowed_prefixes = ["Merge", "Revert", "Pull request", "fixup!", "squash!", "Initial commit"]
+# commitizen's defaults with the separator kept (so `Mergefoo` and `Reverting`
+# are checked), plus `amend! ` from git commit --fixup=amend:/reword: and
+# GitHub's machine-written root commit.
+allowed_prefixes = ["Merge ", "Revert ", "Pull request", "fixup! ", "squash! ", "amend! ", "Initial commit"]
 
 [tool.commitizen.customize]
 schema = "type(scope): description  (scope mandatory; subject <= 100 chars, lowercase start, no trailing period)"
-# (?s) lets `.` cross newlines so a body may follow the subject. The lookahead
-# caps the first line at 100 characters; the `[^.\n])?` tail plus the `$` anchor
-# is what rejects a trailing period.
-schema_pattern = "(?s)^(?=[^\\n]{1,100}(\\n|$))(feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\([a-z][a-z0-9-]*\\)!?: [a-z0-9`]([^\\n]*[^.\\n])?(\\n.*)?$"
+# (?s) lets `.` cross newlines so a body may follow the subject after a blank
+# line. The first lookahead caps the first line at 100 characters; the second
+# rejects a line in the body that starts like a typed subject, because cz's
+# bump and changelog scan every line of a message, so `docs(x): a` plus a body
+# line `feat(y): b` would bump MINOR. The `[^.\n])?` tail plus the `$` anchor
+# rejects a trailing period. The scope may not end in a hyphen.
+schema_pattern = "(?s)^(?=[^\\n]{1,100}(\\n|$))(?!.*\\n[ \\t]*(feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\([^)\\n]*\\)!?:)(feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\([a-z]([a-z0-9-]*[a-z0-9])?\\)!?: [a-z0-9`]([^\\n]*[^.\\n])?(\\n(\\n.*)?)?$"
 example = "fix(updater): guard against an empty release manifest"
-bump_pattern = "^((BREAKING[\\-\\ ]CHANGE|feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report)(\\(.+\\))?!?):"
+# Dev-tooling scopes never bump, matching changelog_pattern below. cz reads
+# group(1) as the matched prefix, so the lookahead must not capture.
+bump_pattern = "^(?!(?:feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\((?:worktree|roadmap|commit-convention)\\))((BREAKING[\\-\\ ]CHANGE|feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report)(\\(.+\\))?!?):"
 bump_map = { "^.+!$" = "MAJOR", "^BREAKING[\\-\\ ]CHANGE" = "MAJOR", "^feat" = "MINOR", "^fix" = "PATCH", "^perf" = "PATCH" }
 change_type_order = ["BREAKING CHANGE", "feat", "fix", "perf"]
 commit_parser = "^(?P<change_type>feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\((?P<scope>[a-z][a-z0-9-]*)\\)(?P<breaking>!)?:\\s(?P<message>.*)?"
 # User-facing changes only. The leading lookahead keeps scopes that never reach
 # a user (dev tooling, roadmap, this convention) out of the changelog even when
 # their type is feat/fix/perf, e.g. `feat(worktree): ...` in the history.
-changelog_pattern = "^(?!(feat|fix|perf)\\((worktree|roadmap|commit-convention)\\))(feat|fix|perf|BREAKING CHANGE)(\\(.+\\))?(!)?"
+# Keep this scope list identical to the one in bump_pattern.
+changelog_pattern = "^(?!(?:feat|fix|perf)\\((?:worktree|roadmap|commit-convention)\\))(feat|fix|perf|BREAKING CHANGE)(\\(.+\\))?(!)?"
 change_type_map = { feat = "Added", fix = "Fixed", perf = "Changed" }
 message_template = "{{change_type}}({{scope}}): {{message}}"
 
