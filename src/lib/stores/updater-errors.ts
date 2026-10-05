@@ -32,6 +32,7 @@ const PERMISSION_PATTERNS = [
   'failed to move the new app into place', // admin prompt cancelled or failed
   'user canceled', // AppleScript, error -128
   'user cancelled',
+  'usercancelled', // report 01's literal "-128 UserCancelled"
   '(-128)',
   'permission denied',
   'permissiondenied',

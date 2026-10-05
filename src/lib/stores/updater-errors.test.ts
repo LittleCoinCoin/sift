@@ -49,3 +49,51 @@ test('non-string inputs are stringified', () => {
   assert.equal(classifyInstallError(42), 'Update failed: 42');
   assert.equal(classifyInstallError(undefined), 'Update failed: undefined');
 });
+
+// One case per classifier pattern, each input matching ONLY that pattern, so
+// blanking any single pattern fails at least one test.
+const PERMISSION_CASES: Record<string, string> = {
+  'failed to move the new app into place': 'Failed to move the new app into place',
+  'user canceled': 'User canceled',
+  'user cancelled': 'User cancelled',
+  usercancelled: 'UserCancelled',
+  '(-128)': 'AppleScript error (-128)',
+  'permission denied': 'Permission denied (os error 13)',
+  permissiondenied: 'PermissionDenied (os error 1)',
+  'operation not permitted': 'Operation not permitted (os error 1)',
+  'read-only file system': 'Read-only file system (os error 30)',
+  'authentication failed or was cancelled': 'Authentication failed or was cancelled',
+};
+
+const VERIFICATION_CASES: Record<string, string> = {
+  'signature verification failed': 'The signature verification failed',
+  'different key than the one provided':
+    'The signature was created with a different key than the one provided',
+  'invalid encoding in minisign data': 'Invalid encoding in minisign data',
+  'unexpected signature algorithm': 'Unexpected signature algorithm',
+  'could not be decoded':
+    'The signature abc could not be decoded, please check if it is a valid base64 string.',
+};
+
+for (const [pattern, input] of Object.entries(PERMISSION_CASES)) {
+  test(`permission pattern: ${pattern}`, () => {
+    assert.equal(classifyInstallError(input), PERMISSION);
+  });
+}
+
+for (const [pattern, input] of Object.entries(VERIFICATION_CASES)) {
+  test(`verification pattern: ${pattern}`, () => {
+    assert.equal(classifyInstallError(input), VERIFICATION);
+  });
+}
+
+test('report-01 literal "-128 UserCancelled" is classified as permission/cancel', () => {
+  assert.equal(classifyInstallError('-128 UserCancelled'), PERMISSION);
+});
+
+test('network failures are not mistaken for permission or verification errors', () => {
+  const status = 'Download request failed with status: 403';
+  assert.equal(classifyInstallError(status), `Update failed: ${status}`);
+  const send = 'error sending request for url (https://github.com/o/r/releases/latest/download/latest.json)';
+  assert.equal(classifyInstallError(send), `Update failed: ${send}`);
+});
