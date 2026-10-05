@@ -10,6 +10,7 @@
 - ⬜ Every non-`actions/` `uses:` in `release.yml` is pinned to a 40-hex SHA [static]
 - ⬜ `node --test scripts/build-latest-json.test.mjs` passes. Fixtures are signed at test time with a throwaway key: both platforms are emitted, a wrong-key `.sig` exits non-zero, and a missing platform exits non-zero [run]
 - ⬜ `scripts/release-pr.sh --no-push` in a scratch clone at the integration tip produces a `release(sift): v0.2.0` commit and leaves no local `v0.2.0` tag. On a clone with no commits since the tag (exit 3) and with only non-bumping commits (exit 21), it exits 0 with a clear message [run]
+- ⬜ In a scratch clone, `scripts/release-pr.sh --no-push` with a modified tracked file exits non-zero and creates no branch. With `cargo` made unavailable via `PATH`, it exits non-zero and leaves a clean tree on the original branch [run]
 **References**: tauri-action `action.yml` (inputs `releaseId`, `uploadUpdaterJson`, `uploadUpdaterSignatures`); colgrep-mcp `.github/workflows/publish.yml` (guard and CHANGELOG-section extraction); the `.sig` and pubkey formats (base64 of minisign files, prehashed `ED` signatures)
 
 ## Step 1: latest.json assembler and verifier
@@ -35,6 +36,7 @@
 3. Run `uvx --from commitizen==4.19.1 cz bump --changelog --yes`.
    - Exit 3 (no commits since the tag) and exit 21 (nothing bumpable): print why, switch back, delete the branch, exit 0.
    - Any other non-zero exit is an error.
+   - **Measured (commit_convention verifier):** cz commits with `-a`, so a dirty tracked file would leak into the release commit. Refuse to start unless `git status --porcelain` is empty. If the bump fails midway (e.g. the `cargo` pre-bump hook exits 26), cz leaves `package.json`, `Cargo.toml` and `CHANGELOG.md` modified with no commit. Restore them (`git restore --staged --worktree .`), switch back, delete the branch, and exit non-zero with the cz exit code.
 4. Delete the local tag cz created (`git tag -d "v$(node scripts/check-release-config.mjs --print-version)"`). CI is the only tag author.
 5. Unless `--no-push`, push the branch and `gh pr create --base main --title "release(sift): v<V>"`, with a body containing the new CHANGELOG section.
 **Deliverables**: `scripts/release-pr.sh` (flags `--no-push`, `--force`)
