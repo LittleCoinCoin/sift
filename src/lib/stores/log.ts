@@ -33,6 +33,16 @@ export function registerJobActiveCheck(fn: () => boolean) {
 export const toasts = writable<Toast[]>([]);
 export const progress = writable<ProgressState | null>(null);
 
+// Non-toast log: entries are recorded without surfacing UI (e.g. background
+// failures the user did not ask about). Capped so it cannot grow unbounded.
+const MAX_LOG_ENTRIES = 200;
+export const logEntries = writable<LogEvent[]>([]);
+
+export function logEntry(level: LogLevel, message: string) {
+  const entry: LogEvent = { level, message, timestamp: Date.now() };
+  logEntries.update(es => [entry, ...es].slice(0, MAX_LOG_ENTRIES));
+}
+
 export function dismissToast(id: number) {
   toasts.update(ts => ts.filter(t => t.id !== id));
 }
