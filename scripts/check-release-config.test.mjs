@@ -260,7 +260,7 @@ test("negative: valid base64 that is not a minisign key", () => {
 
 test("negative: minisign key whose second line does not start with RW", () => {
   const r = run(
-    setPubkey("untrusted comment: minisign public key: D559D24817DAAB93\nXXSTq9oX\n"),
+    setPubkey("untrusted comment: minisign public key: 1884DC5376300376\nXXSTq9oX\n"),
   );
   assert.equal(r.status, 1);
 });
@@ -282,7 +282,7 @@ const keyLine = (idHexBigEndian, keyBytes) =>
     Buffer.from(idHexBigEndian, "hex").reverse(),
     keyBytes,
   ]).toString("base64");
-const PROD_ID = "D559D24817DAAB93";
+const PROD_ID = "1884DC5376300376";
 const PROD_COMMENT = `untrusted comment: minisign public key: ${PROD_ID}`;
 
 // Verifier's spoof: a fresh key wrapped under the production comment line.
@@ -312,7 +312,7 @@ test("the pinned constants describe the key in tauri.conf.json", () => {
   const conf = JSON.parse(readFileSync(path.join(repo, "src-tauri/tauri.conf.json"), "utf8"));
   assert.equal(conf.plugins.updater.pubkey, EXPECTED_PUBKEY);
   const r = run();
-  assert.match(r.stdout, /ok   pinned EXPECTED_PUBKEY embeds key id D559D24817DAAB93/);
+  assert.match(r.stdout, /ok   pinned EXPECTED_PUBKEY embeds key id 1884DC5376300376/);
 });
 
 test("negative: https endpoint outside this repository's releases", () => {
@@ -336,7 +336,7 @@ test("--root followed by a flag is a usage error on stderr, not a path", () => {
 
 test("negative: pubkey comment line is not the minisign public key header", () => {
   const r = run(
-    setPubkey(`untrusted comment: signature from tauri secret key: D559D24817DAAB93\n${GOOD_KEY_LINE}\n`),
+    setPubkey(`untrusted comment: signature from tauri secret key: 1884DC5376300376\n${GOOD_KEY_LINE}\n`),
   );
   assert.equal(r.status, 1);
   assert.match(r.stdout, /FAIL plugins\.updater\.pubkey is a minisign/);

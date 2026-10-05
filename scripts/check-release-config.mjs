@@ -28,11 +28,11 @@ const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
 // comment. Rotating the updater key MUST change this constant deliberately: a
 // swapped key makes every installed app reject all future updates.
 export const EXPECTED_PUBKEY =
-  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ1NTlEMjQ4MTdEQUFCOTMKUldTVHE5b1hTTkpaMVJaek8rTC9XWkdKYkhvcVljTmdlS0pIQVdxWjdrVStoeTUvUjNNeWNHdloK";
+  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE4ODREQzUzNzYzMDAzNzYKUldSMkF6QjJVOXlFR0NlNFJmd09wdHVtL3I5cXQ1ZEw5ajBndEFyUVplRlNPbHV2MGJpVUVFL3YK";
 // Minisign key id carried inside the key material of EXPECTED_PUBKEY (bytes
 // 2..10 of the decoded second line, little-endian). Checked against the bytes,
 // not against the comment, so the constant above cannot be a mislabelled key.
-export const EXPECTED_PUBKEY_ID = "D559D24817DAAB93";
+export const EXPECTED_PUBKEY_ID = "1884DC5376300376";
 // Updater endpoints must stay on this repository's GitHub releases.
 export const EXPECTED_ENDPOINT_PREFIX =
   "https://github.com/LittleCoinCoin/sift/releases/";
