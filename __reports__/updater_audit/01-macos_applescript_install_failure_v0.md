@@ -11,7 +11,7 @@ reversibility: easy
 evidence: verified
 spotted-during: auto-updater flow audit, tracing downloadAndInstall() on macOS
 date: 2026-05-16
-status: open
+status: resolved
 ---
 
 ## TL;DR
@@ -62,3 +62,19 @@ error classifier; add a short integration note to `__reports__/updater_audit/REA
 
 Archive. Revisit after first production release — assess frequency of install
 failures before deciding whether the classifier is worth the fragility cost.
+
+## Resolution
+
+Resolved on `task/install_feedback`. `classifyInstallError`
+(`src/lib/stores/updater-errors.ts`) maps permission, cancelled-admin-prompt and
+read-only-volume failures to one actionable message, and signature failures to a
+verification message; other errors pass through behind "Update failed: ".
+Commit `9bfe999` (`fix(updater): classify install failures into actionable messages`);
+the store now surfaces these in `fix(updater): show restart only after the install succeeds`.
+
+Correction to the evidence above: in tauri-plugin-updater 2.10.1 a cancelled or failed
+AppleScript prompt is returned as `Failed to move the new app into place` (an
+`io::Error` with kind PermissionDenied), not `-128 UserCancelled`; the classifier
+matches that string as well as the strings listed in this report. The optional
+pre-flight check was not implemented. The rollback concern (temp backup left
+unreferenced) is not addressed by this change.
