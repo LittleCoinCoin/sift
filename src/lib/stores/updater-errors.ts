@@ -15,6 +15,10 @@ export const INSTALL_MESSAGES = {
   ready: 'Update ready — restart to apply',
   restartLabel: 'Restart Now',
   restartFailedPrefix: 'Restart failed: ',
+  upToDate: 'Sift is up to date.',
+  checkFailedPrefix: "Couldn't check for updates: ",
+  // log-only (never shown as a toast)
+  backgroundCheckFailedPrefix: 'Background update check failed: ',
 } as const;
 
 // tauri-plugin-updater rejects with plain strings (Error Display text), not
