@@ -23,9 +23,15 @@ on:
     paths:
       - .github/workflows/release.yml
       - src-tauri/tauri.conf.json
+      - src-tauri/Cargo.toml
+      - src-tauri/build.rs
+      - package.json
       - .cz.toml
       - scripts/build-latest-json.mjs
+      - scripts/build-latest-json.test.mjs
       - scripts/check-release-config.mjs
+      - scripts/check-release-config.test.mjs
+      - scripts/release-pr.sh
   workflow_dispatch:
     inputs:
       dry_run:
@@ -37,7 +43,7 @@ on:
 # off, GitHub still drops a *pending* run when a newer one queues in the same
 # group, which would let a rehearsal silently replace a queued real release.
 concurrency:
-  group: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)) && 'release' || format('release-rehearsal-{0}', github.ref) }}
+  group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref == 'refs/heads/main')) && 'release' || format('release-rehearsal-{0}', github.ref) }}
   cancel-in-progress: false
 
 permissions:
@@ -67,10 +73,10 @@ jobs:
       release: ${{ steps.decide.outputs.release }}
       dry: ${{ steps.decide.outputs.dry }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - name: Decide whether this run releases
@@ -121,6 +127,7 @@ jobs:
           existing="$(git ls-remote --tags origin "refs/tags/$TAG")"
           if [ -n "$existing" ]; then
             RELEASE=false; REASON="tag $TAG already exists on the remote"
+            echo "::notice title=No release::$TAG already exists on the remote, so this run releases nothing. That is normal for any merge that does not bump the version. If you expected a release: a tag means v$V was already published or yanked (a yank leaves its tag), so ship the next version through scripts/release-pr.sh instead."
             emit; exit 0
           fi
 
@@ -160,7 +167,7 @@ jobs:
     outputs:
       release_id: ${{ steps.create.outputs.release_id }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Create the draft release
@@ -244,7 +251,7 @@ jobs:
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -254,7 +261,7 @@ jobs:
           version: '9'
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -303,8 +310,9 @@ jobs:
       contents: write
     outputs:
       latest_sha256: ${{ steps.assemble.outputs.latest_sha256 }}
+      assets_sha256: ${{ steps.assemble.outputs.assets_sha256 }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -314,7 +322,7 @@ jobs:
           version: '9'
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -402,7 +410,16 @@ jobs:
 
           gh release upload "$TAG" latest.json --clobber
           sha="$(shasum -a 256 latest.json | cut -d' ' -f1)"
-          echo "latest_sha256=$sha" >> "$GITHUB_OUTPUT"
+          # The exact bytes that were verified: publish re-checks the draft's
+          # tarballs and signatures against these before it flips the draft.
+          sums="$(cd assets && shasum -a 256 -- * | LC_ALL=C sort -k2)"
+          [ "$(printf '%s\n' "$sums" | wc -l | tr -d ' ')" -eq 4 ] || fail "expected 4 verified files (2 tarballs, 2 .sig), got: $sums"
+          {
+            echo "latest_sha256=$sha"
+            echo "assets_sha256<<ASSETS_SUMS_EOF"
+            printf '%s\n' "$sums"
+            echo "ASSETS_SUMS_EOF"
+          } >> "$GITHUB_OUTPUT"
           { echo "verified latest.json for v$V (sha256 $sha):"; echo '```json'; cat latest.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
@@ -410,7 +427,7 @@ jobs:
     needs: [decide, create-release, assemble-verify]
     # `needs` succeeded is implied by this being a plain expression; the dry
     # check keeps rehearsals (and anything not a real release) out.
-    if: needs.decide.outputs.release == 'true' && needs.decide.outputs.dry == 'false' && needs.assemble-verify.outputs.latest_sha256 != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.decide.outputs.release == 'true' && needs.decide.outputs.dry == 'false' && needs.assemble-verify.outputs.latest_sha256 != '' && needs.assemble-verify.outputs.assets_sha256 != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -424,15 +441,24 @@ jobs:
         id: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          ASSETS_SUMS: ${{ needs.assemble-verify.outputs.assets_sha256 }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$*"; exit 1; }
           [ "$TAG" = "v$V" ] || fail "tag $TAG is not v$V"
-          # What gets published is exactly the manifest assemble-verify proved.
-          mkdir verified
+          # What gets published is exactly what assemble-verify proved: the
+          # manifest, and every tarball and signature it checked.
+          mkdir verified verified-assets
           gh release download "$TAG" --dir verified --pattern latest.json
           got="$(sha256sum verified/latest.json | cut -d' ' -f1)"
           [ "$got" = "$VERIFIED_SHA" ] || fail "draft latest.json sha256 $got differs from the verified $VERIFIED_SHA"
+          [ -n "$ASSETS_SUMS" ] || fail "assemble-verify passed no tarball checksums"
+          gh release download "$TAG" --dir verified-assets --pattern '*.app.tar.gz*'
+          have="$(cd verified-assets && sha256sum -- * | LC_ALL=C sort -k2)"
+          if [ "$have" != "$ASSETS_SUMS" ]; then
+            printf 'verified:\n%s\n\nin the draft now:\n%s\n' "$ASSETS_SUMS" "$have"
+            fail "the draft's tarballs or signatures changed after verification"
+          fi
           # Publishing creates the v$V tag at the release target.
           gh release edit "$TAG" --draft=false --latest
 
@@ -471,6 +497,13 @@ jobs:
         run: |
           echo "::warning::publish or smoke test failed; returning $TAG to draft"
           gh release edit "$TAG" --draft=true
+          # Publishing created the tag and returning to draft does not remove it,
+          # so decide will refuse to release this version again.
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error title=$TAG is yanked and its tag remains::Runbook. 1) Find out what failed (the smoke test step) and whether anyone could have downloaded the release while it was public. 2) If it was served, treat the version as burnt: fix forward and ship the next patch with scripts/release-pr.sh. 3) If nothing was ever served (the release was public only for this run and the manifest never reached clients), delete the remote tag with: gh api -X DELETE repos/$GH_REPO/git/refs/tags/$TAG, then re-run this workflow from main with workflow_dispatch and dry_run=false."
+          else
+            echo "::error title=$TAG was not published::The release is still a draft and no tag was created; re-run the failed run, or workflow_dispatch from main with dry_run=false."
+          fi
 
   cleanup:
     name: cleanup
