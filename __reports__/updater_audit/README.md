@@ -18,10 +18,11 @@ pipeline (`__roadmap__/update-flow-hardening/`).
 
 ## Status
 
-The update flow is proven locally by 04 and 05. What remains is online: the
-release rehearsal on the integration PR, and the first published release
-(v0.2.0). Two cases are left to a human: cancelling the administrator prompt,
-and Cmd+C/V in Settings after the menu fix.
+The update flow is proven locally by 04 and 05, and online by the v0.2.0
+release (05, addendum). The first release rehearsal caught a mismatched
+signing key, which was rotated before anything shipped. Still open, to check
+at the 0.2.1 release: the first in-app update from an installed 0.2.0,
+cancelling the administrator prompt, and Cmd+C/V in Settings.
 
 A related product gap found during 05 is tracked separately: API keys are never
 persisted because keyring has no platform backend

@@ -98,3 +98,36 @@ node --test src/lib/stores/updater-errors.test.ts          # 26 pass; blanking '
 cargo test --manifest-path src-tauri/Cargo.toml --lib service_defaults_to_sift
 pnpm build && ! grep -rq 'e2e-log' dist
 ```
+
+## Addendum: the v0.2.0 release (2026-10-05)
+
+The local runs above used a throwaway key. Online, the release pipeline added
+the one proof they could not give: that the key CI signs with is the key
+installed apps trust.
+
+| Step | Run / PR | Outcome |
+|:-----|:---------|:--------|
+| First rehearsal on the integration PR | #1, run 37266887344 | **FAIL, as designed.** minisign rejected the CI-built `.sig` files: key id `AFF21837544E94EA` (repo secret) ≠ `D559D24817DAAB93` (pinned in `tauri.conf.json`). Before this campaign, the release would have published and every installed copy would have rejected the update. No release had ever been published, so the maintainer rotated to a fresh pair, `1884DC5376300376`, backed up in the vault. |
+| Rehearsal after rotation | #1, run 37268804646 | PASS. Both platforms verify, lipo gives arm64/x86_64 for the executable and pdfium, the `dryrun-*` draft is deleted. |
+| Merge of #1 to `main` | run 37269737955 | `decide`: `release=false` (tag v0.1.4 exists). No-op, as intended. |
+| Rehearsal on the release PR | #2, run 37269944747 | FAIL in a verifier unit test, not in the release. Tauri prints minisign key ids without zero padding, and the test expected 16 hex digits, so about 1 throwaway key in 16 failed. Fixed in the test (`b3a8886`); production code reads key ids from the key bytes. |
+| Merge of #2 (release `57c225b`) | run 37272671132 | PASS in 563 s. v0.2.0 published as **Latest**, tag on `57c225b`, the anonymous smoke test passed. |
+
+Independent check after publishing: the public `latest.json` (version 0.2.0,
+`darwin-aarch64` and `darwin-x86_64`) and both update archives were downloaded
+anonymously, as an installed app would. Both signatures verify with minisign
+against the pubkey in `tauri.conf.json`, and each archive holds a top-level
+`Sift.app`.
+
+User checks:
+- The 0.2.0 DMG was installed into `/Applications` by the maintainer.
+- Still open:
+  - Cmd+C/V in Settings, after the menu fix;
+  - cancelling the administrator prompt;
+  - the first in-app update from an installed 0.2.0, which needs 0.2.1 to exist.
+
+  Check all three at the 0.2.1 release.
+
+`main` is now protected: the four CI checks are required, branches must be up
+to date, PRs are required, only merge commits are allowed, and force-push and
+deletion are blocked.
