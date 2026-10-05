@@ -22,7 +22,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { decodeMinisign, mapPlatforms } from "./build-latest-json.mjs";
+import { decodeMinisign, mapPlatforms, main } from "./build-latest-json.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const script = path.join(repo, "scripts", "build-latest-json.mjs");
@@ -91,12 +91,37 @@ function assetsDir(mutate, key = keyA) {
   return dir;
 }
 
-function run(dir, { conf = confWith(keyA.pub), extra = [], tag = `v${V}`, version = V } = {}) {
-  const out = path.join(work, `out-${counter++}.json`);
-  const r = sh(process.execPath, [
-    script, "--assets", dir, "--version", version, "--tag", tag,
+const pubkeyOf = (confPath) =>
+  JSON.parse(readFileSync(confPath, "utf8")).plugins.updater.pubkey;
+
+function argvFor(dir, conf, out, { extra = [], tag = `v${V}`, version = V } = {}) {
+  return [
+    "--assets", dir, "--version", version, "--tag", tag,
     "--repo", REPO, "--conf", conf, "--out", out, ...extra,
-  ]);
+  ];
+}
+
+// In-process, with the pin set to `pin` (default: the conf's own key) so the
+// throwaway-key fixtures can reach the signature checks. The command line has
+// no such switch; `runCli` below uses the real pin.
+function run(dir, { conf = confWith(keyA.pub), pin = pubkeyOf(conf), ...rest } = {}) {
+  const out = path.join(work, `out-${counter++}.json`);
+  const lines = [];
+  const orig = console.error;
+  console.error = (...a) => lines.push(a.join(" "));
+  let status;
+  try {
+    status = main(argvFor(dir, conf, out, rest), { expectedPubkey: pin });
+  } finally {
+    console.error = orig;
+  }
+  return { status, stderr: lines.join("\n"), out, wrote: existsSync(out) };
+}
+
+// The real command line: the pin is the production key.
+function runCli(dir, conf) {
+  const out = path.join(work, `out-${counter++}.json`);
+  const r = sh(process.execPath, [script, ...argvFor(dir, conf, out)]);
   return { status: r.status, stderr: r.stderr, out, wrote: existsSync(out) };
 }
 
@@ -135,6 +160,22 @@ test("the production pubkey rejects throwaway-signed assets", signing, () => {
   const r = run(assetsDir(), { conf: realConf });
   assert.equal(r.status, 1);
   assert.equal(r.wrote, false);
+  assert.match(r.stderr, /does not verify/);
+});
+
+test("the command line pins the production key: a conf with any other key is refused", signing, () => {
+  const r = runCli(assetsDir(), confWith(keyA.pub));
+  assert.equal(r.status, 1);
+  assert.equal(r.wrote, false);
+  assert.match(r.stderr, /not the pinned production key/);
+});
+
+test("a spoofed conf (fresh key under the production comment) is refused before any signature check", signing, () => {
+  const [comment] = Buffer.from(pubkeyOf(realConf), "base64").toString("utf8").split("\n");
+  const spoof = Buffer.from(`${comment}\n${Buffer.from(keyA.pub, "base64").toString("utf8").split("\n")[1]}\n`).toString("base64");
+  const r = runCli(assetsDir(), confWith(spoof));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /not the pinned production key/);
 });
 
 test("one bad signature among two good ones fails the whole run", signing, () => {

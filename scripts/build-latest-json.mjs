@@ -10,7 +10,9 @@
 // <dir> holds the signed updater assets of one release, exactly as tauri-action
 // uploads them: `Sift_<V>_aarch64.app.tar.gz` and `Sift_<V>_x64.app.tar.gz`,
 // each next to its `.sig`. The script:
-//   1. decodes `plugins.updater.pubkey` (base64 of a minisign .pub file);
+//   1. requires `plugins.updater.pubkey` to equal the pinned production key
+//      (EXPECTED_PUBKEY in check-release-config.mjs), then decodes it (base64
+//      of a minisign .pub file);
 //   2. verifies every tarball against its `.sig` (base64 of a minisign
 //      signature file) with that key, failing on the first mismatch;
 //   3. maps the tarballs to `darwin-aarch64` and `darwin-x86_64`, failing when
@@ -37,6 +39,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { EXPECTED_PUBKEY } from "./check-release-config.mjs";
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
@@ -168,7 +171,9 @@ function parseArgs(argv) {
   return opts;
 }
 
-export function main(argv = process.argv.slice(2)) {
+// `expectedPubkey` is the pin the conf must match. The command line cannot
+// change it; only an in-process caller (the tests, with throwaway keys) can.
+export function main(argv = process.argv.slice(2), { expectedPubkey = EXPECTED_PUBKEY } = {}) {
   let opts;
   try {
     opts = parseArgs(argv);
@@ -194,10 +199,15 @@ export function main(argv = process.argv.slice(2)) {
 
   let tmp;
   try {
-    const pubText = decodeMinisign(
-      JSON.parse(readFileSync(conf, "utf8")).plugins?.updater?.pubkey,
-      "pub",
-    );
+    const pubkey = JSON.parse(readFileSync(conf, "utf8")).plugins?.updater?.pubkey;
+    // The key is the trust root: signatures made with any other key must never
+    // produce a manifest, however well-formed the conf looks.
+    if (pubkey !== expectedPubkey) {
+      throw new Error(
+        "plugins.updater.pubkey is not the pinned production key (EXPECTED_PUBKEY in scripts/check-release-config.mjs)",
+      );
+    }
+    const pubText = decodeMinisign(pubkey, "pub");
     const mapped = mapPlatforms(readdirSync(assets), version);
     tmp = mkdtempSync(path.join(tmpdir(), "latest-json-"));
     const platforms = {};
