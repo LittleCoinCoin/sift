@@ -76,16 +76,17 @@ function observeToasts(): void {
   const scheduleClick = (kind: 'available' | 'ready', toast: Element, text: string): void => {
     if (clicked[kind]) return;
     clicked[kind] = true;
-    setTimeout(() => {
+    setTimeout(async () => {
       const button = toast.querySelector<HTMLButtonElement>('.toast-action');
       const stillThere =
         toast.isConnected && toast.querySelector('.toast-message')?.textContent?.trim() === text;
       if (button && stillThere) {
         const label = button.textContent?.trim() ?? '';
+        // Post first: Restart Now ends this process, so a post after the click is lost.
+        await post(`click ${kind} (${label})`);
         button.click();
-        void post(`click ${kind} (${label})`);
       } else {
-        void post(`click ${kind} skipped: toast or button gone`);
+        await post(`click ${kind} skipped: toast or button gone`);
       }
     }, CLICK_DELAY_MS);
   };
