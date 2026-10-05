@@ -25,36 +25,49 @@ in a local `commit-msg` hook and, later, in CI.
 
 A breaking change bumps MAJOR (MINOR while the version is below 1.0.0). Mark it
 with a `!` after the scope (`feat(updater)!: ...`), a `BREAKING CHANGE:` footer,
-or both; either one is enough.
+or both; either one is enough, and it works on any type, not only `feat`. The
+"Bump" column shows the bump without it. Known limitation: `fix(x)!:` is listed
+under "Fixed" in the changelog, not as breaking.
 
 ### Scope
 
 The scope is mandatory and kebab-case: lowercase letters, digits and hyphens,
-starting with a letter. Name the area touched, not the file. Scopes already in
-use: `frontend`, `backend`, `release`, `updater`, `config`, `toast`, `ui`,
-`settings`, `fields`, `tabs`, `deps`, `ci`, `worktree`. A roadmap leaf's own name
-is the scope for its commits (`rdm(update-flow-hardening): ...`).
+starting with a letter and not ending in a hyphen. Name the area touched, not
+the file. Scopes already in use: `frontend`, `backend`, `release`, `updater`,
+`config`, `toast`, `ui`, `settings`, `fields`, `tabs`, `deps`, `ci`, `worktree`.
+A roadmap leaf's own name is the scope for its commits
+(`rdm(update-flow-hardening): ...`).
 
-The scopes `worktree`, `roadmap` and `commit-convention` never reach a user, so
-they are kept out of the changelog even on a `feat` or `fix`.
+The scopes `worktree`, `roadmap` and `commit-convention` never reach a user:
+they neither bump the version nor appear in the changelog, even on a `feat` or
+`fix`.
 
 ### Subject
 
 - Imperative mood, starts with a lowercase letter, digit or backtick.
 - No trailing period.
 - At most 100 characters for the whole first line.
+- No leading space.
 
 ### Body
 
-Add a body when the reason is not obvious. It explains WHY the change was made;
-the diff already shows what changed. Wrap it at about 72 columns.
+Separate it from the subject with a blank line. Add one when the reason is not
+obvious. It explains WHY the change was made; the diff already shows what
+changed. Wrap it at about 72 columns.
+
+No line of a body may start like a typed subject (`feat(scope): ...`, optionally
+indented). commitizen scans every line of a message for bumps, so such a line
+would bump the version no matter what the subject says. `BREAKING CHANGE:` and
+trailers such as `Co-Authored-By:` are fine. This applies to every commit.
 
 ### Merge commits
 
-`Merge ...` subjects written by git, GitHub and `Revert ...`, `fixup!` and
-`squash!` are exempt from the subject check. Write the body of a merge as WHY
-prose and never start a line with `type(scope):`. commitizen would read such a
-line as a change to bump or list in the changelog.
+`Merge ...`, `Revert ...`, `fixup! ...`, `squash! ...` and `amend! ...` subjects
+are exempt from the subject check, and the hook does not lint merge bodies, so
+write the body as WHY prose and never start a line with `type(scope):`. The same
+bump scan reads it. GitHub's merge button puts the pull request title in the
+merge body, so the PR title's type classifies the merge: CI lints PR titles for
+that reason.
 
 ### Install the hook
 
