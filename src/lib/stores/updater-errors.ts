@@ -6,6 +6,15 @@ export const INSTALL_MESSAGES = {
     "Couldn't install the update: move Sift to your Applications folder (or approve the administrator prompt) and try again.",
   verification: 'The update failed verification and was not installed.',
   failedPrefix: 'Update failed: ',
+  available: (version: string) => `Update ${version} available`,
+  installLabel: 'Install',
+  downloading: 'Downloading update…',
+  downloadingPercent: (percent: number) => `Downloading update… ${percent}%`,
+  downloadingKb: (kb: number) => `Downloading update… ${kb} KB`,
+  installing: 'Installing update…',
+  ready: 'Update ready — restart to apply',
+  restartLabel: 'Restart Now',
+  restartFailedPrefix: 'Restart failed: ',
 } as const;
 
 // tauri-plugin-updater rejects with plain strings (Error Display text), not

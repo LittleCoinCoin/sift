@@ -1,72 +1,118 @@
 import { listen } from '@tauri-apps/api/event';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { showToast, showToastReturningId, updateToastMessage, dismissToast } from './log';
+import {
+  showToast,
+  showToastReturningId,
+  updateToastMessage,
+  dismissToast,
+  logEntry,
+  type LogLevel,
+} from './log';
+import { classifyInstallError, INSTALL_MESSAGES } from './updater-errors';
+
+// idle        nothing in flight
+// available   an "Update X available" toast is open
+// installing  download + install running (blocks Install clicks and re-checks)
+// ready       install succeeded, waiting for the user to restart (blocks re-checks:
+//             check() would return the same update and clobber the ready toast)
+type Phase = 'idle' | 'available' | 'installing' | 'ready';
 
 let _initialized = false;
-let _downloadInProgress = false; // guard against concurrent Install clicks
+let _phase: Phase = 'idle';
+let _toastId: number | null = null; // the single updater toast
+
+type ToastOpts = { action?: { label: string; onClick: () => void }; persistent?: boolean };
+
+// Show an updater toast, replacing whichever updater toast is currently open
+// so at most one is ever on screen.
+function showUpdaterToast(level: LogLevel, message: string, opts?: ToastOpts): void {
+  if (_toastId !== null) dismissToast(_toastId);
+  _toastId = showToastReturningId(level, message, opts);
+}
+
+// A boolean helper (not an inline comparison) so TypeScript does not narrow
+// _phase across the awaits below.
+function isBusy(): boolean {
+  return _phase === 'installing' || _phase === 'ready';
+}
+
+function setProgress(message: string): void {
+  if (_toastId !== null) updateToastMessage(_toastId, message);
+}
 
 async function startDownload(update: Update): Promise<void> {
-  if (_downloadInProgress) return;
-  _downloadInProgress = true;
+  if (isBusy()) return;
+  _phase = 'installing';
 
-  const id = showToastReturningId('info', 'Downloading update…', { persistent: true });
+  showUpdaterToast('info', INSTALL_MESSAGES.downloading, { persistent: true });
   let downloaded = 0;
   let contentLength: number | undefined;
-  let isFinished = false;
+  let installing = false;
 
   try {
     await update.downloadAndInstall((event) => {
       if (event.event === 'Started') {
         contentLength = event.data.contentLength;
       } else if (event.event === 'Progress') {
+        if (installing) return;
         downloaded += event.data.chunkLength;
         if (contentLength !== undefined) {
-          updateToastMessage(
-            id,
-            `Downloading update… ${Math.round((downloaded / contentLength) * 100)}%`,
-          );
+          setProgress(INSTALL_MESSAGES.downloadingPercent(Math.round((downloaded / contentLength) * 100)));
         } else {
           // server sent no Content-Length — show bytes instead of percentage
-          updateToastMessage(id, `Downloading update… ${Math.round(downloaded / 1024)} KB`);
+          setProgress(INSTALL_MESSAGES.downloadingKb(Math.round(downloaded / 1024)));
         }
       } else if (event.event === 'Finished') {
-        isFinished = true;
-        dismissToast(id);
-        showToastReturningId('success', 'Update ready — restart to apply', {
-          persistent: true,
-          action: {
-            label: 'Restart Now',
-            onClick: async () => {
-              try {
-                await relaunch();
-              } catch (err) {
-                showToast('error', `Restart failed: ${String(err)}`);
-              }
-            },
-          },
-        });
+        // Finished marks the end of the DOWNLOAD only; install() runs after it.
+        installing = true;
+        showUpdaterToast('info', INSTALL_MESSAGES.installing, { persistent: true });
       }
     });
+
+    // downloadAndInstall resolved: the new bundle is in place.
+    _phase = 'ready';
+    showUpdaterToast('success', INSTALL_MESSAGES.ready, {
+      persistent: true,
+      action: {
+        label: INSTALL_MESSAGES.restartLabel,
+        onClick: async () => {
+          try {
+            await relaunch();
+          } catch (err) {
+            showToast('error', `${INSTALL_MESSAGES.restartFailedPrefix}${String(err)}`);
+          }
+        },
+      },
+    });
   } catch (err) {
-    // Only dismiss/error if Finished never fired — avoids clobbering the
-    // success toast in the unlikely case the promise rejects after Finished.
-    if (!isFinished) {
-      dismissToast(id);
-      showToast('error', String(err));
-    }
-  } finally {
-    _downloadInProgress = false;
+    console.error('[updater] downloadAndInstall() threw:', err);
+    _phase = 'idle';
+    showUpdaterToast('error', classifyInstallError(err));
   }
 }
 
 async function checkForUpdates(explicit: boolean): Promise<void> {
+  // Never let a re-check clobber a running install or the "ready" toast.
+  if (isBusy()) return;
   try {
     const update = await check();
+    // The phase may have moved on while check() was awaiting.
+    if (isBusy()) return;
     if (update !== null) {
-      showToastReturningId('info', `Update ${update.version} available`, {
+      _phase = 'available';
+      showUpdaterToast('info', INSTALL_MESSAGES.available(update.version), {
         persistent: true,
-        action: { label: 'Install', onClick: () => startDownload(update) },
+        action: {
+          label: INSTALL_MESSAGES.installLabel,
+          onClick: () => {
+            if (_phase !== 'available') return;
+            // Dismiss the "available" toast before the progress toast takes over.
+            if (_toastId !== null) dismissToast(_toastId);
+            _toastId = null;
+            void startDownload(update);
+          },
+        },
       });
     } else if (explicit) {
       showToast('info', 'Sift is up to date.');
@@ -75,8 +121,10 @@ async function checkForUpdates(explicit: boolean): Promise<void> {
     console.error('[updater] check() threw:', err);
     if (explicit) {
       showToast('warn', String(err));
+    } else {
+      // background check: no toast, but keep a record in the log store
+      logEntry('warn', `Background update check failed: ${String(err)}`);
     }
-    // background check failure silently swallowed
   }
 }
 
