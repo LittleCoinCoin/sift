@@ -22,10 +22,10 @@ Every PR is gated online, a merged release PR becomes a verified published relea
 ## Status
 ```mermaid
 graph TD
-    ci_workflow[CI Workflow]:::planned
-    release_workflow[Release Workflow]:::planned
-    e2e_ui[E2E UX Harness]:::planned
-    e2e_native[E2E Native Update]:::planned
+    ci_workflow[CI Workflow]:::inprogress
+    release_workflow[Release Workflow]:::inprogress
+    e2e_ui[E2E UX Harness]:::inprogress
+    e2e_native[E2E Native Update]:::inprogress
     next[Docs Closure Level]:::planned
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
@@ -37,10 +37,10 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `ci_workflow.md` | 📄 Leaf Task | ⬜ Planned |
-| `release_workflow.md` | 📄 Leaf Task | ⬜ Planned |
-| `e2e_ui.md` | 📄 Leaf Task | ⬜ Planned |
-| `e2e_native.md` | 📄 Leaf Task | ⬜ Planned |
+| `ci_workflow.md` | 📄 Leaf Task | 🔄 In Progress |
+| `release_workflow.md` | 📄 Leaf Task | 🔄 In Progress |
+| `e2e_ui.md` | 📄 Leaf Task | 🔄 In Progress |
+| `e2e_native.md` | 📄 Leaf Task | 🔄 In Progress |
 | `next/` | 📁 Directory | ⬜ Planned |
 
 ## Amendment Log

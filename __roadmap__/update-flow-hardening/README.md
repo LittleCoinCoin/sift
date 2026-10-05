@@ -33,10 +33,10 @@ Make "click to download, click to install" work for real users, proven by agent-
 ## Status
 ```mermaid
 graph TD
-    commit_convention[Commit Convention]:::inprogress
-    release_config[Release Config]:::inprogress
-    install_feedback[Install Feedback]:::inprogress
-    next[CI Release and E2E]:::planned
+    commit_convention[Commit Convention]:::done
+    release_config[Release Config]:::done
+    install_feedback[Install Feedback]:::done
+    next[CI Release and E2E]:::inprogress
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -47,10 +47,10 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `commit_convention.md` | 📄 Leaf Task | 🔄 In Progress |
-| `release_config.md` | 📄 Leaf Task | 🔄 In Progress |
-| `install_feedback.md` | 📄 Leaf Task | 🔄 In Progress |
-| `next/` | 📁 Directory | ⬜ Planned |
+| `commit_convention.md` | 📄 Leaf Task | ✅ Done |
+| `release_config.md` | 📄 Leaf Task | ✅ Done |
+| `install_feedback.md` | 📄 Leaf Task | ✅ Done |
+| `next/` | 📁 Directory | 🔄 In Progress |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |
