@@ -1,3 +1,7 @@
+<script lang="ts">
+  // Decorative background; no props. The script tag lets svelte-check type the import.
+</script>
+
 <div class="caustics" aria-hidden="true">
   <div class="layer layer-a"></div>
   <div class="layer layer-b"></div>
