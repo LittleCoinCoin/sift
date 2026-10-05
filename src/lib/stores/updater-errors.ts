@@ -42,6 +42,7 @@ const PERMISSION_PATTERNS = [
   'permissiondenied',
   'operation not permitted',
   'read-only file system',
+  'cross-device link', // EXDEV: Sift runs from a mounted disk image, the temp dir is on another volume
   'authentication failed or was cancelled', // Linux pkexec path
 ];
 

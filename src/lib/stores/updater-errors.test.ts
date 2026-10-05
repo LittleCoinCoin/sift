@@ -62,6 +62,8 @@ const PERMISSION_CASES: Record<string, string> = {
   permissiondenied: 'PermissionDenied (os error 1)',
   'operation not permitted': 'Operation not permitted (os error 1)',
   'read-only file system': 'Read-only file system (os error 30)',
+  // measured by the native E2E: updating a Sift that runs from a mounted .dmg
+  'cross-device link': 'Cross-device link (os error 18)',
   'authentication failed or was cancelled': 'Authentication failed or was cancelled',
 };
 
