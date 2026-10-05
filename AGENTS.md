@@ -28,11 +28,13 @@ does not restate it.
 - **Measure, don't assume.** Record what you ran and what it printed. When a
   spec, a brief or this file is wrong, report it with evidence rather than
   building on it.
-- **When coordinating subagents,** a dispatch costs roughly 10–30 min and
-  150–300k tokens.
-  - Do cheap, mechanical work yourself: a function-sized fix, a config line,
-    conflict resolution.
-  - Delegate leaves with real design content.
+- **When coordinating subagents: the coordinator is pragmatic, not dogmatic.**
+  - A dispatch costs ~10–30 min and ~150–300k tokens.
+  - Anything cheaper to do directly than to brief, the coordinator does
+    itself, with the same commit discipline. That covers a fix up to one
+    function, a config line, a mechanical fix after a verifier finding,
+    conflict resolution, and the coordinator-direct items in the tree.
+  - Leaves with real design content are dispatched.
   - Send anything whose failure would be silent or user-facing to an
     adversarial verifier, and name what it should attack.
 
