@@ -114,6 +114,20 @@ before a release, or when you touch `src/lib/stores/updater*`:
 Never add a dependency without saying so in the PR: every roadmap leaf gates
 on `pnpm-lock.yaml` staying unchanged.
 
+### Direct pushes to `main`
+
+`main` is protected so that changes to the app follow one predictable path.
+The protection is a practice we chose, not a dogma. Mechanical maintenance
+goes straight to `main` (maintainers bypass the PR requirement):
+
+- roadmap status and bookkeeping (`rdm`), report indexes and records (`report`);
+- typo-level documentation fixes.
+
+Anything that can change what users get goes through a PR: code, workflows,
+manifests, dependencies, the version, and the release machinery. Direct
+pushes still go through the commit-msg hook, and CI still runs on `main`
+afterwards. When in doubt, open a PR.
+
 ## Releasing
 
 Releases ship to every installed copy: Sift checks
