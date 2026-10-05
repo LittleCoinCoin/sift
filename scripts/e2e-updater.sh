@@ -47,10 +47,54 @@ SHOTS_OK=1
 
 # ---------------------------------------------------------------- helpers
 
-say()  { printf '[e2e %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
-pass() { printf '  PASS  %s\n' "$*"; }
-fail() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
-die()  { printf '[e2e] fatal: %s\n' "$*" >&2; exit 2; }
+# Everything printed is also appended to $LOG_DIR/transcript.log (set once LOG_DIR is
+# clean), so the PASS/FAIL lines of a run can be re-read afterwards.
+TRANSCRIPT=""
+emit() { printf '%s\n' "$*"; if [ -n "$TRANSCRIPT" ]; then printf '%s\n' "$*" >>"$TRANSCRIPT"; fi; return 0; }
+say()  { emit "[e2e $(date +%H:%M:%S)] $*"; }
+pass() { emit "  PASS  $*"; }
+fail() { emit "  FAIL  $*"; FAILS=$((FAILS + 1)); }
+die()  { emit "[e2e] fatal: $*"; exit 2; }
+
+# dump_log <title> <file> [tail-lines]: indented copy of a log into the transcript.
+dump_log() {
+  local line
+  say "$1"
+  if [ -n "${3:-}" ]; then tail -n "$3" "$2" >"$LOG_DIR/.dump"; else cp "$2" "$LOG_DIR/.dump"; fi
+  while IFS= read -r line; do emit "    $line"; done <"$LOG_DIR/.dump"
+  rm -f "$LOG_DIR/.dump"
+}
+
+# note_pid <label> <pid>: PIDs are kept in $LOG_DIR/pids.txt.
+note_pid() { printf '%s %s %s\n' "$(date +%H:%M:%S)" "$1" "$2" >>"$LOG_DIR/pids.txt"; }
+
+# Detach the read-only image, bounded: plain, then forced once. RO_DEVICE stays set when
+# the volume is still mounted, so the failure is visible and cleanup can retry.
+detach_ro() {
+  [ -n "$RO_DEVICE" ] || return 0
+  bounded 30 hdiutil detach -quiet "$RO_MOUNT" >/dev/null 2>&1 \
+    || bounded 30 hdiutil detach -quiet -force "$RO_MOUNT" >/dev/null 2>&1 || true
+  if mount | grep -q " on $RO_MOUNT ("; then
+    fail "image still mounted at $RO_MOUNT ($RO_DEVICE): run 'hdiutil detach -force $RO_MOUNT'"
+    return 1
+  fi
+  RO_DEVICE=""
+}
+
+# Fingerprint of everything a build is made from. Line 1 (the commit) is informational;
+# the lines that follow decide whether E2E_SKIP_BUILD may reuse a build: the trees of the
+# build inputs at HEAD, the hash of uncommitted changes to them, and of untracked inputs.
+STAMP_INPUTS="src src-tauri index.html package.json pnpm-lock.yaml vite.config.ts tsconfig.json"
+source_stamp() {
+  (
+    cd "$ROOT" || exit 1
+    echo "commit $(git rev-parse HEAD)"
+    local p
+    for p in $STAMP_INPUTS; do echo "tree $p $(git rev-parse "HEAD:$p")"; done
+    echo "diff $(git diff HEAD -- $STAMP_INPUTS | shasum -a 256 | cut -d' ' -f1)"
+    echo "untracked $(git ls-files --others --exclude-standard -- $STAMP_INPUTS | sort | while IFS= read -r f; do shasum -a 256 "$f"; done | shasum -a 256 | cut -d' ' -f1)"
+  )
+}
 
 # Presence of a generic-password item (attributes only, so no keychain prompt).
 keychain_presence() {
@@ -147,9 +191,7 @@ cleanup() {
   kill_app "$APP"
   kill_app "$RO_MOUNT/Sift.app"
   stop_server
-  if [ -n "$RO_DEVICE" ]; then
-    hdiutil detach -quiet "$RO_MOUNT" 2>/dev/null || hdiutil detach -quiet -force "$RO_MOUNT" 2>/dev/null || true
-  fi
+  detach_ro || true
   # The e2e service only; never "sift".
   local i
   for i in 1 2 3 4; do security delete-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1 || break; done
@@ -221,17 +263,29 @@ build_b() {
   (cd "$ROOT" && VITE_SIFT_E2E= pnpm build >/dev/null 2>&1) || true
 }
 
-# The compile-time keychain override must be in both binaries, or the run could touch 'sift'.
+# Prove the compiled-in keyring service, not just that a string is present.
+#  - the only source of the literal "sift-e2e" in the binaries is option_env!("SIFT_KEYRING_SERVICE")
+#    in keyring_store.rs (asserted below), and SERVICE is the only consumer of that value;
+#  - in the debug build B the literal sits right before "api-key" / "extraction-api-key" in
+#    .rodata, which is the order of the constants SERVICE, USER, EXTRACTION_USER, so it is the
+#    SERVICE constant that carries it. The LTO release build A keeps the literal on its own,
+#    so for A the proof is the literal plus the single-consumer check.
+# Not proven here: that the keyring backend is real. It is the in-memory mock (see the report).
 verify_keychain_isolation() {
-  local label bundle
-  for label in A B; do
-    if [ "$label" = A ]; then bundle="$W/A/Sift.app"; else bundle="$B_PRISTINE"; fi
-    if LC_ALL=C grep -aq "$KEYCHAIN_SERVICE" "$(app_binary "$bundle")"; then
-      pass "build $label embeds keychain service '$KEYCHAIN_SERVICE'"
-    else
-      die "build $label does not embed '$KEYCHAIN_SERVICE': refusing to launch (it could use the real keychain)"
-    fi
-  done
+  local n
+  n="$(grep -rl 'SIFT_KEYRING_SERVICE' "$ROOT/src-tauri/src" | wc -l | tr -d ' ')"
+  [ "$n" = 1 ] || die "SIFT_KEYRING_SERVICE is read in $n source files (expected only keyring_store.rs)"
+  if grep -rq 'sift-e2e' "$ROOT/src-tauri/src" --include='*.rs' --exclude=keyring_store.rs; then
+    die "'sift-e2e' appears in Rust sources besides keyring_store.rs, so its presence in a binary proves nothing"
+  fi
+  local bin_a bin_b
+  bin_a="$(app_binary "$W/A/Sift.app")"; bin_b="$(app_binary "$B_PRISTINE")"
+  LC_ALL=C grep -aq "$KEYCHAIN_SERVICE" "$bin_a" \
+    || die "build A does not embed '$KEYCHAIN_SERVICE': refusing to launch (it could use the real keychain)"
+  pass "build A embeds '$KEYCHAIN_SERVICE', which only SIFT_KEYRING_SERVICE can have put there"
+  LC_ALL=C grep -aq "${KEYCHAIN_SERVICE}api-key" "$bin_b" \
+    || die "build B does not carry '$KEYCHAIN_SERVICE' as the service constant (next to api-key): refusing to launch"
+  pass "build B has '$KEYCHAIN_SERVICE' directly before 'api-key' (the SERVICE constant)"
 }
 
 # launch_app <bundle> <logprefix> [VAR=value ...]: start the app through LaunchServices
@@ -269,6 +323,7 @@ run_happy_path() {
   local t0=$SECONDS
   launch_app "$APP" "$LOG_DIR/app-happy" || { fail "app never reported 'booted $OLD_VERSION'"; fetch_log >"$LOG_DIR/happy.log"; return; }
   local pid1; pid1="$(app_pid "$APP")"
+  note_pid happy-before-restart "$pid1"
   say "booted $OLD_VERSION as pid $pid1 after $((SECONDS - t0))s (launch attempts: $LAUNCH_ATTEMPTS)"
   shot 01-booted
 
@@ -276,14 +331,14 @@ run_happy_path() {
   available="$(copy "M.available('$NEW_VERSION')")"
   wait_for_log "toast $available\$" 40 || fail "no '$available' toast within 40s"
   shot 02-available
-  wait_for_log "click available" 15 || fail "driver never clicked Install"
+  wait_for_log "click available \\(" 15 || fail "driver never clicked Install"
 
   percent_re="toast $(copy "M.downloadingPercent('@')" | sed 's/@%$//')([1-9]|[1-9][0-9])%\$"
   wait_for_log "$percent_re" 60 && shot 03-downloading
   wait_for_log "toast $(copy M.installing)\$" 90 && shot 04-installing
   wait_for_log "toast $(copy M.ready)\$" 90 || fail "never reached the ready toast within 90s"
   shot 05-ready
-  wait_for_log "click ready" 15 || fail "driver never clicked Restart Now"
+  wait_for_log "click ready \\(" 15 || fail "driver never clicked Restart Now"
 
   # The relaunch is a new process; wait for it to announce itself.
   if wait_for_log "booted $NEW_VERSION\$" 60; then
@@ -297,19 +352,21 @@ run_happy_path() {
   wait_for_log_after "booted $NEW_VERSION\$" "keychain (ok|error)" 20 || { say "no keychain probe result within 20s: probe blocked"; shot 07-keychain-blocked; }
   sleep 6
   local pid2; pid2="$(app_pid "$APP")"
+  note_pid happy-after-restart "$pid2"
   fetch_log >"$LOG_DIR/happy.log"
 
-  say "happy-path /e2e-log:"; sed 's/^/    /' "$LOG_DIR/happy.log"
+  dump_log "happy-path /e2e-log:" "$LOG_DIR/happy.log"
   local log="$LOG_DIR/happy.log"
+  say "download progress lines: $(grep -cE "toast $(copy "M.downloadingPercent('@')" | sed 's/@%$//')[0-9]+%\$" "$log") (N% toasts, 0% to 100%)"
 
   # 1. ordered sequence (line numbers must increase)
   local n_av n_click1 n_pct n_inst n_ready n_click2 n_boot ok=1 prev=0 name
   n_av="$(first_line "$log" "toast $available\$")"
-  n_click1="$(first_line "$log" "click available")"
+  n_click1="$(first_line "$log" "click available \\(")"
   n_pct="$(first_line "$log" "$percent_re")"
   n_inst="$(first_line "$log" "toast $(copy M.installing)\$")"
   n_ready="$(first_line "$log" "toast $(copy M.ready)\$")"
-  n_click2="$(first_line "$log" "click ready")"
+  n_click2="$(first_line "$log" "click ready \\(")"
   n_boot="$(first_line "$log" "booted $NEW_VERSION\$")"
   for name in n_av n_click1 n_pct n_inst n_ready n_click2 n_boot; do
     local v="${!name}"
@@ -385,17 +442,19 @@ run_readonly_case() {
   pass "$RO_MOUNT is read-only ($RO_DEVICE)"
 
   # (a) What a user running Sift from a mounted disk image gets: the temp dir is on
-  #     the writable system volume, so renaming the bundle fails with EXDEV, not EROFS.
+  #     the writable system volume, so renaming the bundle fails with EXDEV, which the
+  #     classifier maps to the permission copy.
   readonly_attempt image-realistic
-  # (b) The EROFS path (INSTALL_MESSAGES.permission): only reachable when the temp dir
-  #     itself is on the read-only volume, so point the app's TMPDIR there.
+  # (b) Secondary: the EROFS path, only reachable when the temp dir itself is on the
+  #     read-only volume, so point the app's TMPDIR there.
   readonly_attempt tmpdir-on-volume "TMPDIR=$RO_MOUNT/tmp/"
 
-  hdiutil detach -quiet "$RO_MOUNT" 2>/dev/null || hdiutil detach -quiet -force "$RO_MOUNT"
-  RO_DEVICE=""
+  detach_ro
 }
 
 # readonly_attempt <label> [VAR=value ...]
+# Both cases must: download to 100%, reach "Installing", then show the exact permission
+# copy, and never show a ready toast or an unclassified "Update failed: ..." toast.
 readonly_attempt() {
   local label="$1"; shift
   local ro_app="$RO_MOUNT/Sift.app" log="$LOG_DIR/readonly-$label.log"
@@ -403,15 +462,18 @@ readonly_attempt() {
   start_server "$LOG_DIR/server-readonly-$label.log"
   launch_app "$ro_app" "$LOG_DIR/app-readonly-$label" "$@" || { fail "[$label] app never reported 'booted $OLD_VERSION'"; fetch_log >"$log"; stop_server; return; }
   local pid1; pid1="$(app_pid "$ro_app")"
-  local available permission permission_re ready_re
+  note_pid "readonly-$label" "$pid1"
+  local available permission permission_re ready_re failed_re pct100_re installing_re
   available="$(copy "M.available('$NEW_VERSION')")"
   permission="$(copy M.permission)"
   permission_re="toast $(re_escape "$permission")\$"
   ready_re="toast $(copy M.ready)\$"
+  failed_re="toast $(re_escape "$(copy M.failedPrefix)")"
+  pct100_re="toast $(re_escape "$(copy "M.downloadingPercent(100)")")\$"
+  installing_re="toast $(copy M.installing)\$"
   wait_for_log "toast $available\$" 40 || fail "[$label] no '$available' toast within 40s"
-  wait_for_log "click available" 15 || fail "[$label] driver never clicked Install"
-  # Any install error ends up as a toast: the permission copy or "Update failed: ...".
-  if wait_for_log "$permission_re|toast $(re_escape "$(copy M.failedPrefix)")" 90; then
+  wait_for_log "click available \\(" 15 || fail "[$label] driver never clicked Install"
+  if wait_for_log "$permission_re|$failed_re" 90; then
     shot "08-readonly-$label"
   else
     fail "[$label] no install error toast within 90s"
@@ -419,16 +481,21 @@ readonly_attempt() {
   sleep 8   # long enough that a ready toast would have shown up
   local pid2; pid2="$(app_pid "$ro_app")"
   fetch_log >"$log"
-  say "[$label] /e2e-log (tail):"; tail -n 6 "$log" | sed 's/^/    /'
+  dump_log "[$label] /e2e-log (tail):" "$log" 8
 
-  local shown; shown="$(grep -E "toast ($(re_escape "$(copy M.failedPrefix)")|$(re_escape "$permission"))" "$log" | tail -1 | sed 's/^[^ ]* toast //')"
-  if log_has "$log" "$permission_re"; then
-    pass "[$label] the INSTALL_MESSAGES.permission copy was shown"
-  elif [ -n "$shown" ] && [ "$label" = image-realistic ]; then
-    # Honest outcome, not a pass of the permission-copy gate: see the report.
-    pass "[$label] the install failed with an error toast, but not the permission copy: '$shown'"
+  local n100 ninst nperm
+  n100="$(first_line "$log" "$pct100_re")"
+  ninst="$(first_line "$log" "$installing_re")"
+  nperm="$(first_line "$log" "$permission_re")"
+  if [ -n "$n100" ] && [ -n "$ninst" ] && [ -n "$nperm" ] && (( n100 < ninst && ninst < nperm )); then
+    pass "[$label] download reached 100%($n100), then installing($ninst), then the exact permission copy($nperm)"
   else
-    fail "[$label] no install error toast was shown"
+    fail "[$label] expected 100% < installing < permission copy; lines: 100%='$n100' installing='$ninst' permission='$nperm'"
+  fi
+  if log_has "$log" "$failed_re"; then
+    fail "[$label] an unclassified 'Update failed: ...' toast was shown: $(grep -E "$failed_re" "$log" | tail -1)"
+  else
+    pass "[$label] no unclassified 'Update failed' toast"
   fi
   if log_has "$log" "$ready_re" || log_has "$log" "click ready"; then
     fail "[$label] a ready toast appeared although the volume is read-only"
@@ -448,20 +515,37 @@ readonly_attempt() {
 
 main() {
   mkdir -p "$W" "$LOG_DIR" "$SHOT_DIR"
-  rm -f "$LOG_DIR"/* "$SHOT_DIR"/*
-  trap cleanup EXIT INT TERM
 
+  # Preflight: refuse before touching anything, so the evidence of the previous run
+  # (logs, transcript, builds) survives a refused run.
   lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 && die "port $PORT is already in use"
   [ -e "$RO_MOUNT" ] && die "$RO_MOUNT already exists"
   [ "$(uname -s)" = Darwin ] || die "macOS only"
 
   # E2E_SKIP_BUILD=1 reuses the builds and key of the previous run (iterating on the
-  # test itself); a normal run always rebuilds with a fresh key.
-  local skip_build="${E2E_SKIP_BUILD:-0}"
+  # test itself); a normal run always rebuilds with a fresh key. build.stamp, written at
+  # build time, makes it refuse when the build inputs changed since (E2E_ALLOW_STALE=1
+  # overrides, for a deliberate run on stale binaries).
+  local skip_build="${E2E_SKIP_BUILD:-0}" stale_warning=""
   if [ "$skip_build" = 1 ]; then
     [ -s "$W/key" ] && [ -d "$W/A/Sift.app" ] && [ -d "$B_PRISTINE" ] && [ -s "$ART_DIR/Sift.app.tar.gz.sig" ] \
       || die "E2E_SKIP_BUILD=1 needs the artifacts of a previous run in $W"
-    say "reusing the builds and key of the previous run"
+    if [ ! -s "$W/build.stamp" ] || [ "$(source_stamp | tail -n +2)" != "$(tail -n +2 "$W/build.stamp")" ]; then
+      if [ "${E2E_ALLOW_STALE:-0}" = 1 ]; then
+        stale_warning="WARNING: the build inputs changed since the last build; E2E_ALLOW_STALE=1, running on stale binaries"
+      else
+        die "the build inputs changed since the builds in $W were made (or no build.stamp); rebuild without E2E_SKIP_BUILD, or set E2E_ALLOW_STALE=1"
+      fi
+    fi
+  fi
+
+  rm -f "$LOG_DIR"/* "$SHOT_DIR"/*
+  TRANSCRIPT="$LOG_DIR/transcript.log"
+  trap cleanup EXIT INT TERM
+
+  if [ "$skip_build" = 1 ]; then
+    [ -z "$stale_warning" ] || say "$stale_warning"
+    say "reusing the builds and key of the previous run (stamp: $(head -1 "$W/build.stamp" 2>/dev/null))"
   else
     say "throwaway signing key"
     rm -f "$W/key" "$W/key.pub"
@@ -478,8 +562,10 @@ main() {
   say "real keychain item 'sift': $REAL_KEYCHAIN_BEFORE (must be the same at the end)"
 
   if [ "$skip_build" != 1 ]; then
+    local stamp; stamp="$(source_stamp)"
     build_a
     build_b
+    printf '%s\n' "$stamp" >"$W/build.stamp"
   fi
   verify_keychain_isolation
   run_happy_path
