@@ -58,10 +58,31 @@ does not.
     - wall-clock timings.
 
     `perf` commits require a measured before/after (CONTRIBUTING).
-  - **Feedback within ~100 ms.** Every user action gets visible feedback that
-    fast; anything longer shows progress and can be cancelled. Never block the
-    webview's main thread or the Tauri async runtime with work that could be
-    streamed, batched, cached or moved off-thread.
+  - **Responsiveness tiers.** These are budgets from the time an input arrives
+    until its visible feedback is on screen, borrowed from real-time games:
+
+    | Tier | Frame rate | Budget per input → visible feedback |
+    |:----:|:----------:|:-----------------------------------:|
+    | **S** | 144 FPS | ≤ 6.9 ms |
+    | **A** | 120 FPS | ≤ 8.3 ms |
+    | **B** | 60 FPS | ≤ 16.7 ms |
+    | **C** | 30 FPS | ≤ 33.3 ms |
+
+    - **Direct manipulation** (typing, clicks, toggles, scrolling, zooming or
+      panning a document, opening a panel) targets **S or A**.
+    - **B** is acceptable.
+    - **C** is the floor. Anything slower is a bug to fix or justify.
+    - **Work that cannot finish inside the budget** (OCR, extraction, export,
+      update download) must still show its first feedback within the tier:
+      a state change, progress or a spinner. It then runs off the critical
+      path, reports progress and can be cancelled.
+    - **Never block** the webview's main thread or the Tauri async runtime
+      with work that could be streamed, batched, cached or moved off-thread.
+    - **When a change touches an interactive path,** state its measured tier
+      in the commit or PR. Measure with Safari Web Inspector's Timelines on a
+      debug build (Tauri on macOS runs in WKWebView), or with
+      `performance.now()` around the handler plus a `requestAnimationFrame`
+      after the update.
   - **"It's I/O-bound" is not a reason to stop.** It is where to look next:
     - remove redundant reads, writes and IPC round-trips;
     - stream instead of loading whole files;
