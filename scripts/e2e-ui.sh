@@ -25,7 +25,7 @@ PRE_CAMPAIGN_REV="bfef3c5"
 SCENARIOS=(
   success no-content-length readonly-volume permission-denied admin-cancel
   signature-fail check-fail-background check-fail-manual up-to-date latest-older
-  double-install-click recheck-while-toast-open
+  double-install-click recheck-while-toast-open download-network-fail
 )
 # Scenarios that inject an install failure; the pre-campaign store must fail them.
 FAILURE_SCENARIOS="readonly-volume,permission-denied,admin-cancel,signature-fail"
@@ -57,14 +57,20 @@ kill_tree() {
 
 cleanup() {
   local status=$?
+  trap - EXIT INT TERM
   [ -n "$SERVER_PID" ] && kill_tree "$SERVER_PID"
+  # Only Chrome started with this run's own profile root; never anyone else's.
+  pkill -f "user-data-dir=$WORK/" 2>/dev/null || true
   if [ -n "$STORE_BACKUP" ] && [ -f "$STORE_BACKUP" ]; then
     cp "$STORE_BACKUP" "$STORE"
   fi
   rm -rf "$WORK"
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+# A signal must end the run non-zero; the EXIT trap then does the cleanup.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap cleanup EXIT
 
 if curl -fs -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then
   echo "port $PORT is already serving something; refusing to test a stale server (set E2E_PORT)" >&2
@@ -94,6 +100,7 @@ fi
 pnpm exec vite preview --config vite.e2e.config.ts --outDir "$OUT" --port "$PORT" --strictPort \
   > "$WORK/preview.log" 2>&1 &
 SERVER_PID=$!
+disown "$SERVER_PID" 2>/dev/null || true
 for _ in $(seq 1 60); do
   curl -fs -o /dev/null "http://127.0.0.1:$PORT/e2e.html" 2>/dev/null && break
   kill -0 "$SERVER_PID" 2>/dev/null || { cat "$WORK/preview.log" >&2; echo "preview server died" >&2; exit 2; }
@@ -123,6 +130,11 @@ dump_dom() { # <url> <budget-ms> <outfile> <tag>
 
 # The runner's scenario list must match the harness's, or a scenario goes unrun.
 dump_dom "http://127.0.0.1:$PORT/e2e.html" 5000 "$WORK/index.html" index
+if ! grep -q 'href="?scenario=' "$WORK/index.html" 2>/dev/null; then
+  echo "environment error: Chrome produced no harness DOM for the scenario index (see Chrome's stderr below)" >&2
+  tail -n 5 "$WORK/chrome-index.err" >&2 2>/dev/null || true
+  exit 2
+fi
 KNOWN="$(grep -o 'href="?scenario=[^"]*"' "$WORK/index.html" | sed 's/.*scenario=//; s/"//' | sort | tr '\n' ' ')"
 if [ "$ONLY" -eq 0 ]; then
   WANT="$(printf '%s\n' "${SCENARIOS[@]}" | sort | tr '\n' ' ')"
