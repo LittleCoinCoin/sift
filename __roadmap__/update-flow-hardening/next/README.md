@@ -22,11 +22,11 @@ Every PR is gated online, a merged release PR becomes a verified published relea
 ## Status
 ```mermaid
 graph TD
-    ci_workflow[CI Workflow]:::inprogress
-    release_workflow[Release Workflow]:::inprogress
-    e2e_ui[E2E UX Harness]:::inprogress
-    e2e_native[E2E Native Update]:::inprogress
-    next[Docs Closure Level]:::planned
+    ci_workflow[CI Workflow]:::done
+    release_workflow[Release Workflow]:::done
+    e2e_ui[E2E UX Harness]:::done
+    e2e_native[E2E Native Update]:::done
+    next[Docs Closure Level]:::inprogress
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -37,11 +37,11 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `ci_workflow.md` | 📄 Leaf Task | 🔄 In Progress |
-| `release_workflow.md` | 📄 Leaf Task | 🔄 In Progress |
-| `e2e_ui.md` | 📄 Leaf Task | 🔄 In Progress |
-| `e2e_native.md` | 📄 Leaf Task | 🔄 In Progress |
-| `next/` | 📁 Directory | ⬜ Planned |
+| `ci_workflow.md` | 📄 Leaf Task | ✅ Done |
+| `release_workflow.md` | 📄 Leaf Task | ✅ Done |
+| `e2e_ui.md` | 📄 Leaf Task | ✅ Done |
+| `e2e_native.md` | 📄 Leaf Task | ✅ Done |
+| `next/` | 📁 Directory | 🔄 In Progress |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |
