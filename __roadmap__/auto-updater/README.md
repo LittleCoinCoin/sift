@@ -25,6 +25,10 @@ Ship silent auto-update checking with actionable toasts and a manual trigger fro
 - The `/releases/latest/download/latest.json` GitHub endpoint only resolves after a draft is manually published — this is intentional. The updater becomes active only on published releases.
 - Testing the full download+install path requires a validly signed `.app.tar.gz` artifact. The notification flow (toasts and buttons) can be verified without it using the local mock endpoint approach described in the plan.
 - `dialog: false` must be set in `tauri.conf.json` to suppress Tauri's built-in update dialog in favour of the custom toasts.
+- **Release reality (2026-10-03 audit):** the gates above were met in code, not in release. Release builds
+  never emitted `.sig` files or `latest.json` (`createUpdaterArtifacts` was missing), every release
+  stayed a draft, and the store reported "ready" before installing. The follow-up campaign
+  `__roadmap__/update-flow-hardening/` fixes this and ships 0.2.0 as the first auto-updating release.
 
 ## Status
 ```mermaid
