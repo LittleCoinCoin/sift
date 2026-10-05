@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { EXPECTED_PUBKEY } from "./check-release-config.mjs";
 import {
   cpSync,
   mkdirSync,
@@ -268,7 +270,49 @@ test("negative: a different minisign key id", () => {
     setPubkey(`untrusted comment: minisign public key: 0123456789ABCDEF\n${GOOD_KEY_LINE}\n`),
   );
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey key id/);
+  // Same key bytes under another comment: the pin catches it, the bytes still
+  // carry the production id.
+  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey equals the pinned production key/);
+});
+
+// A minisign public key file for arbitrary key material: "Ed" + id + 32 bytes.
+const keyLine = (idHexBigEndian, keyBytes) =>
+  Buffer.concat([
+    Buffer.from("Ed"),
+    Buffer.from(idHexBigEndian, "hex").reverse(),
+    keyBytes,
+  ]).toString("base64");
+const PROD_ID = "D559D24817DAAB93";
+const PROD_COMMENT = `untrusted comment: minisign public key: ${PROD_ID}`;
+
+// Verifier's spoof: a fresh key wrapped under the production comment line.
+test("negative: spoof, a fresh key under the production comment", () => {
+  const r = run(
+    setPubkey(`${PROD_COMMENT}\n${keyLine("0123456789ABCDEF", randomBytes(32))}\n`),
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey equals the pinned production key/);
+  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey key id \(from the key bytes\)/);
+});
+
+test("negative: spoof, different key material that reuses the production key id", () => {
+  const r = run(setPubkey(`${PROD_COMMENT}\n${keyLine(PROD_ID, randomBytes(32))}\n`));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey equals the pinned production key/);
+});
+
+test("negative: key material of the wrong length", () => {
+  const r = run(
+    setPubkey(`${PROD_COMMENT}\n${Buffer.concat([Buffer.from("Ed"), randomBytes(20)]).toString("base64")}\n`),
+  );
+  assert.equal(r.status, 1);
+});
+
+test("the pinned constants describe the key in tauri.conf.json", () => {
+  const conf = JSON.parse(readFileSync(path.join(repo, "src-tauri/tauri.conf.json"), "utf8"));
+  assert.equal(conf.plugins.updater.pubkey, EXPECTED_PUBKEY);
+  const r = run();
+  assert.match(r.stdout, /ok   pinned EXPECTED_PUBKEY embeds key id D559D24817DAAB93/);
 });
 
 test("negative: https endpoint outside this repository's releases", () => {

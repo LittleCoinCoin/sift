@@ -21,9 +21,17 @@ import { fileURLToPath } from "node:url";
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
-// Minisign key id of the updater public key embedded in tauri.conf.json.
-// Rotating the updater key MUST change this constant deliberately: a swapped
-// key makes every installed app reject all future updates.
+// The updater public key embedded in tauri.conf.json, pinned as the exact
+// base64 string. Pinning the whole value is what makes this a pin: the
+// "untrusted comment" line and the key id are attacker-writable text, so a
+// check on either alone passes a different key wrapped under the production
+// comment. Rotating the updater key MUST change this constant deliberately: a
+// swapped key makes every installed app reject all future updates.
+export const EXPECTED_PUBKEY =
+  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ1NTlEMjQ4MTdEQUFCOTMKUldTVHE5b1hTTkpaMVJaek8rTC9XWkdKYkhvcVljTmdlS0pIQVdxWjdrVStoeTUvUjNNeWNHdloK";
+// Minisign key id carried inside the key material of EXPECTED_PUBKEY (bytes
+// 2..10 of the decoded second line, little-endian). Checked against the bytes,
+// not against the comment, so the constant above cannot be a mislabelled key.
 export const EXPECTED_PUBKEY_ID = "D559D24817DAAB93";
 // Updater endpoints must stay on this repository's GitHub releases.
 export const EXPECTED_ENDPOINT_PREFIX =
@@ -97,9 +105,22 @@ export function readVersions(root = defaultRoot) {
   };
 }
 
+// Returns the key id embedded in the key material of a minisign public key
+// file's second line: base64 of "Ed" + 8 key-id bytes (little-endian) + 32 key
+// bytes. Throws when the line is not exactly that.
+function embeddedKeyId(line) {
+  if (!BASE64.test(line)) throw new Error("second line is not base64");
+  const raw = Buffer.from(line, "base64");
+  if (raw.length !== 42 || raw.toString("latin1", 0, 2) !== "Ed") {
+    throw new Error("key material is not 'Ed' + 8-byte id + 32-byte key");
+  }
+  return Buffer.from(raw.subarray(2, 10)).reverse().toString("hex").toUpperCase();
+}
+
 // Decodes the base64 pubkey and validates the minisign layout:
 //   line 1: "untrusted comment: minisign public key: <KEYID>"
 //   line 2: base64 key material starting with "RW"
+// The returned id comes from the key bytes, never from the comment.
 function checkPubkey(pubkey) {
   if (typeof pubkey !== "string" || pubkey.length === 0 || !BASE64.test(pubkey)) {
     return { ok: false, detail: `not non-empty base64: ${JSON.stringify(pubkey)}` };
@@ -113,7 +134,11 @@ function checkPubkey(pubkey) {
   if (!key.startsWith("RW")) {
     return { ok: false, detail: "second line does not start with RW" };
   }
-  return { ok: true, detail: "", id: comment.trim().split(/\s+/).pop() };
+  try {
+    return { ok: true, detail: "", id: embeddedKeyId(key) };
+  } catch (e) {
+    return { ok: false, detail: e.message };
+  }
 }
 
 export function checkTauriConf(root = defaultRoot) {
@@ -141,9 +166,21 @@ export function checkTauriConf(root = defaultRoot) {
   const pk = checkPubkey(pubkey);
   add("plugins.updater.pubkey is a minisign public key", pk.ok, pk.detail);
   add(
-    `plugins.updater.pubkey key id is ${EXPECTED_PUBKEY_ID}`,
+    "plugins.updater.pubkey equals the pinned production key",
+    pubkey === EXPECTED_PUBKEY,
+    "the value differs from EXPECTED_PUBKEY in scripts/check-release-config.mjs " +
+      "(a rotation must change that constant on purpose)",
+  );
+  add(
+    `plugins.updater.pubkey key id (from the key bytes) is ${EXPECTED_PUBKEY_ID}`,
     pk.id === EXPECTED_PUBKEY_ID,
     `got ${JSON.stringify(pk.id)}`,
+  );
+  const pinned = checkPubkey(EXPECTED_PUBKEY);
+  add(
+    `pinned EXPECTED_PUBKEY embeds key id ${EXPECTED_PUBKEY_ID}`,
+    pinned.ok && pinned.id === EXPECTED_PUBKEY_ID,
+    `the constant itself decodes to ${JSON.stringify(pinned.id ?? pinned.detail)}`,
   );
   const endpoints = conf.plugins?.updater?.endpoints;
   const bad = Array.isArray(endpoints)
