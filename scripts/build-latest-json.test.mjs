@@ -289,7 +289,8 @@ test("decodeMinisign accepts real tauri output and rejects look-alikes", signing
   const sigPath = signedAsset(work, `decode-${counter++}.tar.gz`, "x", keyA);
   const sigText = decodeMinisign(readFileSync(sigPath, "utf8"), "sig");
   assert.match(sigText, /^untrusted comment: signature from tauri secret key\nRU/);
-  assert.match(decodeMinisign(keyA.pub, "pub"), /^untrusted comment: minisign public key: [0-9A-F]{16}\nRW/);
+  // Tauri prints the key id without zero padding, so 1 key in 16 has fewer digits.
+  assert.match(decodeMinisign(keyA.pub, "pub"), /^untrusted comment: minisign public key: [0-9A-F]{1,16}\nRW/);
   // a signature is not a public key and vice versa
   assert.throws(() => decodeMinisign(keyA.pub, "sig"));
   assert.throws(() => decodeMinisign(readFileSync(sigPath, "utf8"), "pub"));
