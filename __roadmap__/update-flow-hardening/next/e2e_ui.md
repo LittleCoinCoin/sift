@@ -8,7 +8,7 @@
 - ⬜ `bash scripts/e2e-ui.sh` exits 0, and its summary lists all 12 scenarios as `PASS`: success, no-content-length, readonly-volume, permission-denied, admin-cancel, signature-fail, check-fail-background, check-fail-manual, up-to-date, latest-older, double-install-click, recheck-while-toast-open [run]
 - ⬜ `bash scripts/e2e-ui.sh --negative-control` exits non-zero, with the failure scenarios reporting "ready shown after failure" against the pre-campaign store (`git show bfef3c5:src/lib/stores/updater.svelte.ts`). The working tree is restored afterwards (`git diff --exit-code src/lib/stores/updater.svelte.ts`) [run]
 - ⬜ `pnpm build && ! grep -rqE '__e2e|lib/e2e' dist` — the harness never reaches the production bundle [run]
-- ⬜ `git diff --exit-code LittleCoinCoin/main -- pnpm-lock.yaml` — no new dependency [run]
+- ⬜ `git diff --exit-code bfef3c5 -- pnpm-lock.yaml` — no new dependency [run]
 **References**: `node_modules/@tauri-apps/plugin-updater/dist-js/index.d.ts` (`check()` returns `Update | null`; `DownloadEvent` union); `src/lib/stores/updater-errors.ts` (`INSTALL_MESSAGES` copy, owned by install_feedback); `src/lib/Toast.svelte` (`.toast-action` buttons)
 
 ## Step 1: Scenario fakes and self-driving harness

@@ -7,7 +7,7 @@
 - ⬜ `pnpm check` (svelte-check) reports 0 errors, and `pnpm build` passes [run]
 - ⬜ `grep -c isFinished src/lib/stores/updater.svelte.ts` prints `0` [static]
 - ⬜ `node --test src/lib/stores/updater-errors.test.ts` passes. It covers the report-01 strings (`-128` / `User canceled`, `PermissionDenied (os error 1)`), the read-only volume string (`Read-only file system (os error 30)`), a signature-verification failure string, and an unknown string passing through unchanged [run]
-- ⬜ `git diff --exit-code LittleCoinCoin/main -- pnpm-lock.yaml` shows no new dependency [run]
+- ⬜ `git diff --exit-code bfef3c5 -- pnpm-lock.yaml` shows no new dependency [run]
 - ⬜ `__reports__/updater_audit/01-macos_applescript_install_failure_v0.md` front-matter reads `status: resolved` [static]
 **References**: `__reports__/updater_audit/01-macos_applescript_install_failure_v0.md` (failure strings, desired copy); `node_modules/@tauri-apps/plugin-updater/dist-js/index.d.ts` (`DownloadEvent` = `Started{contentLength?}` / `Progress{chunkLength}` / `Finished`; Tauri rejects with plain strings)
 

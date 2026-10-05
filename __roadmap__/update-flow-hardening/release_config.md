@@ -9,7 +9,7 @@
 - ⬜ `node --test scripts/check-release-config.test.mjs` passes, and includes negative cases where the checker exits non-zero: a `Cargo.toml` version drift, a `Cargo.lock` sift-entry drift, `createUpdaterArtifacts: false`, an empty `pubkey`, an `http://` endpoint, and a literal `tauri.conf.json` version instead of `../package.json` [run]
 - ⬜ `node -p "require('./package.json').version"` prints `0.1.4` [run]
 - ⬜ `cd src-tauri && cargo metadata --locked --format-version 1 >/dev/null && cargo check` passes [run]
-- ⬜ `git diff --exit-code LittleCoinCoin/main -- pnpm-lock.yaml` shows no lockfile change [run]
+- ⬜ `git diff --exit-code bfef3c5 -- pnpm-lock.yaml` shows no lockfile change [run]
 **References**: Tauri v2 config reference (`version` may be a path to a package.json; `bundle.createUpdaterArtifacts`); audit finding in the campaign README Context
 
 ## Step 1: Realign manifests to the last released tag

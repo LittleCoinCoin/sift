@@ -26,7 +26,7 @@ Make "click to download, click to install" work for real users, proven by agent-
 - **L1 close integration check (coordinator):** `cz bump --get-next` prints `0.2.0`, and `node scripts/check-release-config.mjs` passes. `.cz.toml` (commit_convention) and the manifests (release_config) are written by different leaves; this is their seam.
 - **Remote name.** It is `LittleCoinCoin` locally and `origin` in CI. Scripts resolve it with `REMOTE="${REMOTE:-$(git config branch.main.remote || echo origin)}"`, and docs say `<remote>/main`.
 - **Signing key.** With `createUpdaterArtifacts`, every `tauri build` needs `TAURI_SIGNING_PRIVATE_KEY`. CI never runs `tauri build`. The E2E uses a throwaway key in `$TMPDIR` that is never committed.
-- **No new devDependencies anywhere in the campaign:** `git diff --exit-code pnpm-lock.yaml` per leaf.
+- **No new devDependencies anywhere in the campaign:** `git diff --exit-code bfef3c5 -- pnpm-lock.yaml` per leaf. The base is the campaign start, not `LittleCoinCoin/main`: the local remote ref predates the updater dependencies.
 - **Verifier leaves** (an adversarial review is dispatched before merge): commit_convention, release_config, install_feedback, release_workflow, e2e_ui, e2e_native. Mechanical leaves (ci_workflow, docs_closure) merge on the implementer's report.
 - **Merge commits.** Subject `Merge task/<leaf> into milestone/update-flow-hardening`. The body is WHY prose that never starts with `type(scope):`, because commitizen would read it as a bump.
 
