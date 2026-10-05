@@ -12,10 +12,19 @@ does not restate it.
 
 ## Working principles
 
-- **Pragmatism over dogma.** Branch protection, PRs, delegation and roadmaps are
-  practices chosen for predictability and scalable management, and exceptions
-  exist. Mechanical maintenance goes straight to `main`; anything users can
-  notice goes through a PR (CONTRIBUTING, "Direct pushes to `main`").
+**Pragmatism over dogma governs everything below**, and every other rule in
+this file and in CONTRIBUTING: git, process, testing, verification,
+delegation, roadmaps, reports. Rules are practices we chose because they help
+and make work predictable for scalable management, and exceptions exist.
+When following a rule to the letter costs more than the rule protects, take
+the exception, say why, and keep it predictable: write a recurring exception
+down where the rule lives. Apply each principle in proportion to the risk. A
+user-facing or silent-failure path earns the full rigour; a mechanical change
+does not.
+
+- **Branch protection and PRs.** Mechanical maintenance goes straight to
+  `main`; anything users can notice goes through a PR (CONTRIBUTING, "Direct
+  pushes to `main`").
 - **No ceremony for bookkeeping.** Never open a PR, or plan a roadmap step,
   just to record results or update a status. Fold records into the next real
   change or push them directly.
@@ -28,7 +37,7 @@ does not restate it.
 - **Measure, don't assume.** Record what you ran and what it printed. When a
   spec, a brief or this file is wrong, report it with evidence rather than
   building on it.
-- **When coordinating subagents: the coordinator is pragmatic, not dogmatic.**
+- **When coordinating subagents, the coordinator is pragmatic, not dogmatic.**
   - A dispatch costs ~10–30 min and ~150–300k tokens.
   - Anything cheaper to do directly than to brief, the coordinator does
     itself, with the same commit discipline. That covers a fix up to one
