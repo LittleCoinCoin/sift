@@ -1,6 +1,11 @@
 use keyring::Entry;
 
-const SERVICE: &str = "sift";
+// Compile-time override so e2e builds (SIFT_KEYRING_SERVICE=sift-e2e) can never
+// read or write the keychain items of the real app. Production leaves it unset.
+const SERVICE: &str = match option_env!("SIFT_KEYRING_SERVICE") {
+    Some(service) => service,
+    None => "sift",
+};
 const USER: &str = "api-key";
 const EXTRACTION_USER: &str = "extraction-api-key";
 
@@ -55,6 +60,14 @@ pub fn delete_extraction_api_key() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_defaults_to_sift() {
+        match option_env!("SIFT_KEYRING_SERVICE") {
+            None => assert_eq!(SERVICE, "sift"),
+            Some(service) => assert_eq!(SERVICE, service),
+        }
+    }
 
     #[test]
     fn entry_construction_succeeds() {

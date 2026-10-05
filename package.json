@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "check": "svelte-check",
-    "e2e:ui": "bash scripts/e2e-ui.sh"
+    "e2e:ui": "bash scripts/e2e-ui.sh",
+    "e2e:native": "bash scripts/e2e-updater.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
