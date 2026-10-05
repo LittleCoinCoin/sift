@@ -16,9 +16,18 @@ import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SEMVER =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+// The release pipeline publishes only final releases (prerelease: false), so
+// prerelease and build metadata are rejected: plain MAJOR.MINOR.PATCH only.
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+// Minisign key id of the updater public key embedded in tauri.conf.json.
+// Rotating the updater key MUST change this constant deliberately: a swapped
+// key makes every installed app reject all future updates.
+export const EXPECTED_PUBKEY_ID = "D559D24817DAAB93";
+// Updater endpoints must stay on this repository's GitHub releases.
+export const EXPECTED_ENDPOINT_PREFIX =
+  "https://github.com/LittleCoinCoin/sift/releases/";
 
 const defaultRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -88,6 +97,25 @@ export function readVersions(root = defaultRoot) {
   };
 }
 
+// Decodes the base64 pubkey and validates the minisign layout:
+//   line 1: "untrusted comment: minisign public key: <KEYID>"
+//   line 2: base64 key material starting with "RW"
+function checkPubkey(pubkey) {
+  if (typeof pubkey !== "string" || pubkey.length === 0 || !BASE64.test(pubkey)) {
+    return { ok: false, detail: `not non-empty base64: ${JSON.stringify(pubkey)}` };
+  }
+  const [comment = "", key = ""] = Buffer.from(pubkey, "base64")
+    .toString("utf8")
+    .split("\n");
+  if (!comment.startsWith("untrusted comment: minisign public key")) {
+    return { ok: false, detail: `bad comment line: ${JSON.stringify(comment)}` };
+  }
+  if (!key.startsWith("RW")) {
+    return { ok: false, detail: "second line does not start with RW" };
+  }
+  return { ok: true, detail: "", id: comment.trim().split(/\s+/).pop() };
+}
+
 export function checkTauriConf(root = defaultRoot) {
   const results = [];
   const add = (name, ok, detail = "") => results.push({ name, ok, detail });
@@ -110,21 +138,23 @@ export function checkTauriConf(root = defaultRoot) {
     `got ${JSON.stringify(art)}`,
   );
   const pubkey = conf.plugins?.updater?.pubkey;
+  const pk = checkPubkey(pubkey);
+  add("plugins.updater.pubkey is a minisign public key", pk.ok, pk.detail);
   add(
-    "plugins.updater.pubkey is non-empty base64",
-    typeof pubkey === "string" && pubkey.length > 0 && BASE64.test(pubkey),
-    `got ${JSON.stringify(pubkey)}`,
+    `plugins.updater.pubkey key id is ${EXPECTED_PUBKEY_ID}`,
+    pk.id === EXPECTED_PUBKEY_ID,
+    `got ${JSON.stringify(pk.id)}`,
   );
   const endpoints = conf.plugins?.updater?.endpoints;
   const bad = Array.isArray(endpoints)
-    ? endpoints.filter((e) => typeof e !== "string" || !e.startsWith("https://"))
+    ? endpoints.filter((e) => typeof e !== "string" || !e.startsWith(EXPECTED_ENDPOINT_PREFIX))
     : null;
   add(
-    "plugins.updater.endpoints are all https://",
+    `plugins.updater.endpoints all start with ${EXPECTED_ENDPOINT_PREFIX}`,
     Array.isArray(endpoints) && endpoints.length > 0 && bad.length === 0,
     !Array.isArray(endpoints) || endpoints.length === 0
       ? "endpoints missing or empty"
-      : `non-https: ${JSON.stringify(bad)}`,
+      : `unexpected: ${JSON.stringify(bad)}`,
   );
   return results;
 }
@@ -167,7 +197,11 @@ export function main(argv = process.argv.slice(2)) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--print-version") {
       printVersion = true;
-    } else if (argv[i] === "--root" && i + 1 < argv.length) {
+    } else if (
+      argv[i] === "--root" &&
+      i + 1 < argv.length &&
+      !argv[i + 1].startsWith("--")
+    ) {
       root = path.resolve(argv[++i]);
     } else {
       console.error(

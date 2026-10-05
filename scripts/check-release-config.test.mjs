@@ -190,3 +190,110 @@ test("runs through a symlinked scripts directory", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---- hardening cases ----
+
+const b64 = (s) => Buffer.from(s).toString("base64");
+const GOOD_KEY_LINE = "RWSTq9oXSNJZ1RZzO+L/WZGJbHoqYcNgeKJHAWqZ7kU+hy5/R3MycGvZ";
+const setPubkey = (text) => editConf((c) => (c.plugins.updater.pubkey = b64(text)));
+
+test("negative: createUpdaterArtifacts is the string \"true\"", () => {
+  const r = run(editConf((c) => (c.bundle.createUpdaterArtifacts = "true")));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL bundle\.createUpdaterArtifacts/);
+});
+
+test("a version line in a table before [package] is not the package version", () => {
+  const r = run(
+    edit("src-tauri/Cargo.toml", (t) =>
+      `[dependencies.x]\nversion = "9.9.9"\n\n${t}`,
+    ),
+  );
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
+test("negative: duplicate sift entries in Cargo.lock", () => {
+  const r = run(
+    edit("src-tauri/Cargo.lock", (t) =>
+      `${t}\n[[package]]\nname = "sift"\nversion = "9.9.9"\n`,
+    ),
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL .*Cargo\.lock/);
+});
+
+test("negative: missing tauri.conf.json", () => {
+  const r = run((dir) => rmSync(path.join(dir, "src-tauri/tauri.conf.json")));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL .*tauri\.conf\.json/);
+});
+
+test("negative: package.json version has a v prefix", () => {
+  const r = run(
+    edit("package.json", (t) => t.replace(/"version": "[^"]*"/, '"version": "v0.1.4"')),
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL package\.json version is semver/);
+});
+
+for (const bad of ["0.1.4-rc.1", "0.1.4+build.5"]) {
+  test(`negative: ${bad} is not a plain MAJOR.MINOR.PATCH version`, () => {
+    const r = run((dir) => {
+      edit("package.json", (t) => t.replace(/"version": "[^"]*"/, `"version": "${bad}"`))(dir);
+      edit("src-tauri/Cargo.toml", (t) => t.replace(/^version = "[^"]*"/m, `version = "${bad}"`))(dir);
+      edit("src-tauri/Cargo.lock", (t) =>
+        t.replace(/(name = "sift"\nversion = )"[^"]*"/, `$1"${bad}"`),
+      )(dir);
+    });
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /FAIL package\.json version is semver/);
+  });
+}
+
+test("negative: valid base64 that is not a minisign key", () => {
+  const r = run(setPubkey("this is just some random text\nnot a key\n"));
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey is a minisign/);
+});
+
+test("negative: minisign key whose second line does not start with RW", () => {
+  const r = run(
+    setPubkey("untrusted comment: minisign public key: D559D24817DAAB93\nXXSTq9oX\n"),
+  );
+  assert.equal(r.status, 1);
+});
+
+test("negative: a different minisign key id", () => {
+  const r = run(
+    setPubkey(`untrusted comment: minisign public key: 0123456789ABCDEF\n${GOOD_KEY_LINE}\n`),
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey key id/);
+});
+
+test("negative: https endpoint outside this repository's releases", () => {
+  const r = run(
+    editConf(
+      (c) => (c.plugins.updater.endpoints = ["https://example.com/latest.json"]),
+    ),
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL plugins\.updater\.endpoints/);
+});
+
+test("--root followed by a flag is a usage error on stderr, not a path", () => {
+  const r = spawnSync(process.execPath, [checker, "--root", "--print-version"], {
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 2);
+  assert.equal(r.stdout, "");
+  assert.match(r.stderr, /usage/);
+});
+
+test("negative: pubkey comment line is not the minisign public key header", () => {
+  const r = run(
+    setPubkey(`untrusted comment: signature from tauri secret key: D559D24817DAAB93\n${GOOD_KEY_LINE}\n`),
+  );
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAIL plugins\.updater\.pubkey is a minisign/);
+});
