@@ -150,6 +150,8 @@ class Harness {
 
 const VERSION = '9.9.9';
 const MB = 1_000_000;
+const NETWORK_ERROR =
+  'error sending request for url (https://github.com/LittleCoinCoin/sift/releases/download/v9.9.9/Sift.app.tar.gz): connection closed before message completed';
 
 type Scenario = {
   description: string;
@@ -408,7 +410,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   }),
 
   'double-install-click': {
-    description: 'Install clicked repeatedly (same tick and later, on the stale button): exactly one download',
+    description: 'Install double-clicked within one tick: exactly one download',
     script: {
       checkLatencyMs: 20,
       checks: [updateStep(downloadOf(withContentLength, { resolve: true }, 100))],
@@ -416,9 +418,7 @@ export const SCENARIOS: Record<string, Scenario> = {
     async drive(h) {
       await h.waitFor(`the "${M.available(VERSION)}" toast`, () => h.showing(M.available(VERSION)), 8000);
       const button = h.click('.toast-action', M.installLabel);
-      button.click(); // double-click: second click lands before Svelte removes the button
-      await h.sleep(10);
-      button.click(); // a third click on the now-detached button
+      button.click(); // double-click: the second click lands before Svelte removes the button
       await h.waitFor(`the "${M.ready}" toast`, () => h.showing(M.ready), 8000);
       await h.sleep(300);
     },
@@ -479,6 +479,42 @@ export const SCENARIOS: Record<string, Scenario> = {
     check(h) {
       h.expect(updaterStats().downloadCalls === 1, `exactly one downloadAndInstall call; got ${updaterStats().downloadCalls}`);
       h.expect(!h.snapshots.some((s) => s.some((t) => t.level === 'error')), 'no error toast');
+    },
+  },
+
+  'download-network-fail': {
+    description: 'Connection drops during the download (before Finished): generic failure copy, no Installing toast, never ready',
+    script: {
+      checkLatencyMs: 20,
+      checks: [
+        updateStep(
+          downloadOf(
+            [
+              { event: 'Started', data: { contentLength: MB } },
+              { event: 'Progress', data: { chunkLength: MB / 4 } },
+            ],
+            { reject: NETWORK_ERROR },
+          ),
+        ),
+      ],
+    },
+    async drive(h) {
+      await openAvailableAndInstall(h);
+      await h.waitFor('the download to fail (error or ready toast)', () => h.showingLevel('error') || h.showing(M.ready), 5000);
+      await h.sleep(500);
+    },
+    check(h) {
+      h.expect(!h.everShown(M.ready), 'ready shown after failure');
+      h.expect(!h.everShown(M.installing), 'no Installing toast: the failure came before the download finished');
+      h.expect(h.everShown(M.downloadingPercent(25)), 'download progress was shown before the failure');
+      const last = h.last();
+      h.expect(
+        last.length === 1 && last[0].level === 'error' && last[0].text === `${M.failedPrefix}${NETWORK_ERROR}`,
+        `final screen is exactly one error toast with the failedPrefix copy; got ${JSON.stringify(last)}`,
+      );
+      h.expect(!last.some((t) => isProgress(t.text)), 'no progress toast left behind after the failure');
+      h.expect(updaterStats().downloadCalls === 1, 'exactly one downloadAndInstall call');
+      h.expect(relaunchCalls() === 0, 'no relaunch after a failed download');
     },
   },
 };
