@@ -80,15 +80,22 @@ STATE=idle
 # so an unexpected failure cannot strand a half-bumped tree. Never fails.
 rollback() {
   set +e
-  git reset -q --hard "$BASE"
-  git clean -fdq
-  local t
-  for t in $(git tag --list); do
-    if ! printf '%s\n' "$TAGS_BEFORE" | grep -qxF -- "$t"; then
-      git tag -d "$t" >/dev/null
-    fi
-  done
-  $SWITCH_BACK
+  # reset --hard and clean destroy work, so they run only on the branch this
+  # run created. If HEAD is anywhere else (the switch failed, or something moved
+  # HEAD), the user's own branch must not be touched.
+  if [ "$(git symbolic-ref -q HEAD)" = "refs/heads/$BRANCH" ]; then
+    git reset -q --hard "$BASE"
+    git clean -fdq
+    local t
+    for t in $(git tag --list); do
+      if ! printf '%s\n' "$TAGS_BEFORE" | grep -qxF -- "$t"; then
+        git tag -d "$t" >/dev/null
+      fi
+    done
+    $SWITCH_BACK
+  else
+    echo "release-pr: HEAD is not on $BRANCH; leaving the working tree alone" >&2
+  fi
   if [ -n "$OLD_TIP" ]; then
     git branch -q -f "$BRANCH" "$OLD_TIP"
   else
@@ -108,12 +115,19 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-STATE=started
+# Create the ref first, without touching the working tree: `git switch -c`
+# rewrites the tree before it learns the ref cannot be created (for example a
+# branch named `release` blocks `release/next`), which deletes the user's files
+# from the tree. If the ref cannot be created nothing has changed and STATE
+# stays idle; if only the switch fails, the rollback removes the new ref and,
+# because HEAD is not on it, leaves the user's branch and files alone.
 if [ -n "$OLD_TIP" ]; then
-  git switch -q --no-track -C "$BRANCH" "$REMOTE/main"
+  git branch -q -f --no-track "$BRANCH" "$REMOTE/main"
 else
-  git switch -q --no-track -c "$BRANCH" "$REMOTE/main"
+  git branch -q --no-track "$BRANCH" "$REMOTE/main"
 fi
+STATE=started
+git switch -q "$BRANCH"
 
 # A leftover local tag for the next version makes cz commit and then fail to tag
 # (exit 7). Name it up front, evaluated on <remote>/main. The rollback would
@@ -168,6 +182,9 @@ awk -v h="## $TAG (" 'index($0, h) == 1 { f = 1; next } /^## v/ { f = 0 } f' CHA
 
 STATE=finished
 echo "release-pr: created $BRANCH with 'release(sift): $TAG' (no local tag)."
+if [ -n "$OLD_TIP" ]; then
+  echo "release-pr: --force replaced the old $BRANCH; its previous tip $OLD_TIP is now unreferenced (keep it with: git branch <name> $OLD_TIP)."
+fi
 
 if [ "$NO_PUSH" -eq 1 ]; then
   rm -f "$NOTES"
