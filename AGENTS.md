@@ -37,6 +37,43 @@ does not.
 - **Measure, don't assume.** Record what you ran and what it printed. When a
   spec, a brief or this file is wrong, report it with evidence rather than
   building on it.
+- **Performance is part of every change, unprompted.** Sift must be a good
+  citizen of the machine it runs on. A fast app means faster dev cycles and
+  happier users, and wasted cycles add up across every app on the machine.
+  - **Before** implementing a feature, weigh its cost:
+    - startup time;
+    - idle CPU and wakeups;
+    - memory;
+    - bundle and download size;
+    - responsiveness.
+
+    Prefer the design that keeps them flat. If a feature has a real cost, say
+    so in the PR with numbers and the trade-off you chose.
+  - **Measure** the metrics a change touches, before and after, and put the
+    numbers in the commit body:
+    - max RSS with `/usr/bin/time -l`;
+    - CPU and wakeups with `ps -o %cpu,rss` or `top -stats pid,cpu,idlew,mem`;
+    - `du -sh` of the `.app`, `.dmg` and update tarball;
+    - `vite build` chunk sizes;
+    - wall-clock timings.
+
+    `perf` commits require a measured before/after (CONTRIBUTING).
+  - **Feedback within ~100 ms.** Every user action gets visible feedback that
+    fast; anything longer shows progress and can be cancelled. Never block the
+    webview's main thread or the Tauri async runtime with work that could be
+    streamed, batched, cached or moved off-thread.
+  - **"It's I/O-bound" is not a reason to stop.** It is where to look next:
+    - remove redundant reads, writes and IPC round-trips;
+    - stream instead of loading whole files;
+    - overlap I/O with work, and cache what is re-read;
+    - shrink payloads;
+    - don't poll when an event exists.
+  - **Take easy wins when you see them:** a smaller footprint, fewer
+    re-renders, lazy loading, dropping an unused dependency. Do them in
+    passing when they're in scope and cheap. Otherwise record them (a notice
+    report or a task) instead of letting them go.
+  - **No idle work.** No timers, watchers or background loops running when
+    nothing has changed, unless the user asked for that work.
 - **When coordinating subagents, the coordinator is pragmatic, not dogmatic.**
   - A dispatch costs ~10–30 min and ~150–300k tokens.
   - Anything cheaper to do directly than to brief, the coordinator does
