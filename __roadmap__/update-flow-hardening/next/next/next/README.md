@@ -19,7 +19,7 @@ User-gated. Each push, PR creation, settings change and merge is confirmed by th
 ## Status
 ```mermaid
 graph TD
-    publish_cycle[Publish Cycle]:::planned
+    publish_cycle[Publish Cycle]:::inprogress
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -30,7 +30,7 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `publish_cycle.md` | 📄 Leaf Task | ⬜ Planned |
+| `publish_cycle.md` | 📄 Leaf Task | 🔄 In Progress |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |

@@ -19,8 +19,8 @@ Coordinator-direct: docs prose is cheaper to write than to brief. It is still co
 ## Status
 ```mermaid
 graph TD
-    docs_closure[Docs Closure]:::inprogress
-    next[Publish Level]:::planned
+    docs_closure[Docs Closure]:::done
+    next[Publish Level]:::inprogress
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -31,8 +31,8 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `docs_closure.md` | 📄 Leaf Task | 🔄 In Progress |
-| `next/` | 📁 Directory | ⬜ Planned |
+| `docs_closure.md` | 📄 Leaf Task | ✅ Done |
+| `next/` | 📁 Directory | 🔄 In Progress |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |
