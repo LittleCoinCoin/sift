@@ -1,0 +1,5 @@
+# Gitignored pdfium binaries (src-tauri/.gitignore) that new worktrees need to build.
+# Copied, not symlinked, into every worktree Claude creates.
+src-tauri/libpdfium.dylib
+src-tauri/libpdfium.so
+src-tauri/pdfium.dll

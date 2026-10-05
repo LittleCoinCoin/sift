@@ -10,6 +10,7 @@ mod settings;
 
 use logger::{emit_log, LogLevel};
 use receipt::ReceiptRecord;
+use tauri::Emitter;
 
 
 #[tauri::command]
@@ -232,11 +233,34 @@ pub fn run() {
                 app.path().resource_dir()?.join(lib_name)
             };
             receipt::init_pdfium_path(dylib_path);
+
+            // Start from Tauri's default menu so the Edit and Window menus survive:
+            // on macOS, Cmd+C/V/X/A/Z in the webview only work through Edit's items.
+            #[cfg(target_os = "macos")]
+            {
+                let check_for_updates =
+                    tauri::menu::MenuItemBuilder::with_id("check_for_updates", "Check for Updates\u{2026}")
+                        .build(app)?;
+                let menu = tauri::menu::Menu::default(app.handle())?;
+                if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu()) {
+                    // Index 1 places the item right after "About Sift", as macOS apps do.
+                    app_menu.insert(&check_for_updates, 1)?;
+                }
+                app.set_menu(menu)?;
+            }
+
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id().0 == "check_for_updates" {
+                let _ = app.emit("check-for-updates", ());
+            }
         })
         .register_asynchronous_uri_scheme_protocol("receipt", |_ctx, request, responder| {
             handle_receipt_uri(request, responder);
         })
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(job_control::JobRegistry::default())

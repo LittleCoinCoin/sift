@@ -1,0 +1,124 @@
+name: CI
+
+# Local gates, run online. The job ids (commits, config, frontend, rust) are
+# the required status checks of branch protection: renaming one breaks it.
+# The remote is `origin` here; locally it is usually `LittleCoinCoin`.
+on:
+  pull_request: {}
+  push: { branches: [main] }
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commits:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The PR head, not the synthetic merge commit GitHub checks out by default.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Lint every commit of the PR
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: uvx --from commitizen==4.19.1 cz check --rev-range "origin/${BASE_REF}..HEAD"
+
+      # GitHub uses the PR title as the squash/merge commit subject.
+      - name: Lint the PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: uvx --from commitizen==4.19.1 cz check --message "$PR_TITLE"
+
+      - name: Probe the commitizen accept/reject rules
+        run: bash scripts/probe_cz_check.sh
+
+  config:
+    name: Release config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '9'
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # The latest.json verifier tests sign fixtures with `pnpm tauri signer` and
+      # check them with minisign; without both they would silently skip.
+      - run: pnpm install --frozen-lockfile
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+
+      - run: node scripts/check-release-config.mjs
+      - run: node --test scripts/*.test.mjs
+        env:
+          SIFT_REQUIRE_SIGNING_TOOLS: '1'
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '9'
+
+      # Node 24 strips types natively, so `node --test` runs the .ts tests as is.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - run: node --test src/lib/stores/*.test.ts
+
+  rust:
+    name: Rust
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '9'
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      # tauri::generate_context! needs frontendDist to exist.
+      - run: pnpm build
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+
+      # --lib leaves out tests/ocr_pipeline.rs, which needs a local Ollama.
+      # Never run `tauri build` here: it needs the updater signing key.
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test --lib

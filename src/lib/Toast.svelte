@@ -15,18 +15,25 @@
     {#each $toasts as toast (toast.id)}
       <div class="toast toast--{toast.level}" role="alert">
         <span class="toast-message">{toast.message}</span>
-        <button
-          class="toast-copy"
-          class:copied={copiedId === toast.id}
-          onclick={() => copyMessage(toast.id, toast.message)}
-          aria-label="Copy message"
-        >
-          {#if copiedId === toast.id}
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-          {:else}
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          {/if}
-        </button>
+        {#if toast.action}
+          <button
+            class="toast-action"
+            onclick={() => toast.action!.onClick()}
+          >{toast.action.label}</button>
+        {:else}
+          <button
+            class="toast-copy"
+            class:copied={copiedId === toast.id}
+            onclick={() => copyMessage(toast.id, toast.message)}
+            aria-label="Copy message"
+          >
+            {#if copiedId === toast.id}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            {:else}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            {/if}
+          </button>
+        {/if}
         <button class="toast-dismiss" onclick={() => dismissToast(toast.id)} aria-label="Dismiss">×</button>
       </div>
     {/each}
@@ -72,6 +79,21 @@
     word-break: break-word;
     overflow-wrap: anywhere;
   }
+
+  .toast-action {
+    color: inherit;
+    background: none;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    line-height: 1;
+    opacity: 0.9;
+    padding: var(--space-1) var(--space-2);
+  }
+  .toast-action:hover { opacity: 1; }
 
   .toast-copy, .toast-dismiss {
     background: none;

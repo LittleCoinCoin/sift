@@ -1,0 +1,76 @@
+# Commit vocabulary, bump mapping and version-file wiring for Sift.
+# Derived from the history up to v0.1.4 (b389baa); ported from colgrep-mcp's
+# [tool.commitizen*] tables. Validate with scripts/probe_cz_check.sh.
+
+[tool.commitizen]
+name = "cz_customize"
+tag_format = "v$version"
+# While below 1.0.0 a BREAKING CHANGE bumps MINOR, not MAJOR.
+major_version_zero = true
+# The root package.json is the canonical version; the other manifests follow it
+# through version_files.
+version_provider = "npm"
+# Cargo.lock needs no entry: `cargo update -w` (pre_bump_hooks) re-locks after
+# the version files are rewritten, and cz commits the release with `git commit -a`.
+version_files = ["src-tauri/Cargo.toml:^version ="]
+pre_bump_hooks = ["cargo update -w --manifest-path src-tauri/Cargo.toml"]
+bump_message = "release(sift): v$new_version"
+update_changelog_on_bump = true
+changelog_incremental = true
+changelog_start_rev = "v0.1.4"
+# commitizen's defaults with the separator kept (so `Mergefoo` and `Reverting`
+# are checked), plus `amend! ` from git commit --fixup=amend:/reword: and
+# GitHub's machine-written root commit.
+allowed_prefixes = ["Merge ", "Revert ", "Pull request", "fixup! ", "squash! ", "amend! ", "Initial commit"]
+
+[tool.commitizen.customize]
+schema = "type(scope): description  (scope mandatory; subject <= 100 chars, lowercase start, no trailing period)"
+# (?s) lets `.` cross newlines so a body may follow the subject after a blank
+# line. The first lookahead caps the first line at 100 characters; the second
+# rejects a line in the body that starts like a typed subject, because cz's
+# bump and changelog scan every line of a message, so `docs(x): a` plus a body
+# line `feat(y): b` would bump MINOR. The `[^.\n])?` tail plus the `$` anchor
+# rejects a trailing period. The scope may not end in a hyphen.
+schema_pattern = "(?s)^(?=[^\\n]{1,100}(\\n|$))(?!.*\\n[ \\t]*(feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\([^)\\n]*\\)!?:)(feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\([a-z]([a-z0-9-]*[a-z0-9])?\\)!?: [a-z0-9`]([^\\n]*[^.\\n])?(\\n(\\n.*)?)?$"
+example = "fix(updater): guard against an empty release manifest"
+# Dev-tooling scopes never bump, matching changelog_pattern below. cz reads
+# group(1) as the matched prefix, so the lookahead must not capture.
+bump_pattern = "^(?!(?:feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\((?:worktree|roadmap|commit-convention)\\))((BREAKING[\\-\\ ]CHANGE|feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report)(\\(.+\\))?!?):"
+bump_map = { "^.+!$" = "MAJOR", "^BREAKING[\\-\\ ]CHANGE" = "MAJOR", "^feat" = "MINOR", "^fix" = "PATCH", "^perf" = "PATCH" }
+change_type_order = ["BREAKING CHANGE", "feat", "fix", "perf"]
+commit_parser = "^(?P<change_type>feat|fix|perf|refactor|test|docs|build|ci|chore|rdm|report|release)\\((?P<scope>[a-z][a-z0-9-]*)\\)(?P<breaking>!)?:\\s(?P<message>.*)?"
+# User-facing changes only. The leading lookahead keeps scopes that never reach
+# a user (dev tooling, roadmap, this convention) out of the changelog even when
+# their type is feat/fix/perf, e.g. `feat(worktree): ...` in the history.
+# Keep this scope list identical to the one in bump_pattern.
+changelog_pattern = "^(?!(?:feat|fix|perf)\\((?:worktree|roadmap|commit-convention)\\))(feat|fix|perf|BREAKING CHANGE)(\\(.+\\))?(!)?"
+change_type_map = { feat = "Added", fix = "Fixed", perf = "Changed" }
+message_template = "{{change_type}}({{scope}}): {{message}}"
+
+[[tool.commitizen.customize.questions]]
+type = "list"
+name = "change_type"
+message = "Select the type of change you are committing"
+choices = [
+    { value = "feat", name = "feat: new user-visible capability (MINOR)" },
+    { value = "fix", name = "fix: corrects behaviour that was wrong (PATCH)" },
+    { value = "perf", name = "perf: speed or memory improvement with a measured before/after (PATCH)" },
+    { value = "refactor", name = "refactor: restructures without changing observable behaviour" },
+    { value = "test", name = "test: adds or changes tests only" },
+    { value = "docs", name = "docs: README, CONTRIBUTING, code comments" },
+    { value = "build", name = "build: manifests, lockfiles, bundler and toolchain config" },
+    { value = "ci", name = "ci: GitHub Actions workflows" },
+    { value = "chore", name = "chore: repo housekeeping that fits nowhere else" },
+    { value = "rdm", name = "rdm: files under __roadmap__/" },
+    { value = "report", name = "report: files under __reports__/" },
+]
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "scope"
+message = "Scope (mandatory, kebab-case, e.g. updater, release, toast)"
+
+[[tool.commitizen.customize.questions]]
+type = "input"
+name = "message"
+message = "Short imperative description (no trailing period)"

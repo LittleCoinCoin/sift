@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
+    // tauri.conf.json reads its version from ../package.json, which tauri-build does not watch.
+    println!("cargo:rerun-if-changed=../package.json");
     download_pdfium();
     tauri_build::build();
 }

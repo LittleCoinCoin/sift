@@ -1,34 +1,267 @@
+# Release pipeline: a merge to main that carries a version without a tag becomes
+# a verified, published GitHub release. Every other merge is a no-op.
+#
+#   decide -> create-release -> build (x2) -> assemble-verify -> publish
+#                                                   cleanup (rehearsals only)
+#
+# Rehearsal mode (pull_request touching this pipeline, or workflow_dispatch
+# with dry_run=true) runs the same jobs against a draft release tagged
+# `dryrun-<run id>`, never touches a `v*` release, skips `publish` and deletes
+# its draft in `cleanup`.
+#
+# Release PRs come from scripts/release-pr.sh. CI is the only tag author: the
+# `v<version>` tag appears when `publish` turns the verified draft into a release.
+#
+# Yank a bad release: `gh release edit vX.Y.Z --draft=true`. Installed apps keep
+# the version they have (allowDowngrades is false).
 name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - src-tauri/tauri.conf.json
+      - src-tauri/Cargo.toml
+      - src-tauri/build.rs
+      - package.json
+      - .cz.toml
+      - scripts/build-latest-json.mjs
+      - scripts/build-latest-json.test.mjs
+      - scripts/check-release-config.mjs
+      - scripts/check-release-config.test.mjs
+      - scripts/release-pr.sh
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Rehearse on a throwaway draft (true) or release for real (false, main only)
+        type: boolean
+        default: true
+
+# Real releases and rehearsals queue in separate groups: with cancel-in-progress
+# off, GitHub still drops a *pending* run when a newer one queues in the same
+# group, which would let a rehearsal silently replace a queued real release.
+concurrency:
+  group: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref == 'refs/heads/main')) && 'release' || format('release-rehearsal-{0}', github.ref) }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Never prompt, never page.
+  GH_PROMPT_DISABLED: '1'
+  GH_PAGER: cat
 
 jobs:
-  build-macos:
+  decide:
+    name: decide
+    # Same condition as every job that can write or sign: a fork PR gets neither
+    # secrets nor a writable token, so it must not get this far.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      tag: ${{ steps.decide.outputs.tag }}
+      release: ${{ steps.decide.outputs.release }}
+      dry: ${{ steps.decide.outputs.dry }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Decide whether this run releases
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          emit() {
+            { echo "version=$V"; echo "tag=$TAG"; echo "release=$RELEASE"; echo "dry=$DRY"; } >> "$GITHUB_OUTPUT"
+            echo "decide: version=$V tag=$TAG release=$RELEASE dry=$DRY ($REASON)" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+
+          # Fails the job when the version files, the updater key or the
+          # endpoints are inconsistent: nothing may release from a broken config.
+          V="$(node scripts/check-release-config.mjs --print-version)"
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version '$V' is not MAJOR.MINOR.PATCH"
+
+          case "$EVENT" in
+            pull_request) DRY=true ;;
+            workflow_dispatch) if [ "$DRY_RUN_INPUT" = false ]; then DRY=false; else DRY=true; fi ;;
+            push) DRY=false ;;
+            *) fail "unexpected event $EVENT" ;;
+          esac
+
+          if [ "$DRY" = true ]; then
+            # A rehearsal owns exactly one release name and it is never a v* tag.
+            TAG="dryrun-$RUN_ID"
+            RELEASE=true
+            REASON="rehearsal"
+            emit
+            exit 0
+          fi
+
+          [ "$REF" = refs/heads/main ] || fail "a real release runs only from refs/heads/main, not $REF"
+          TAG="v$V"
+
+          # 1. The remote tag decides. A tag means this version was already
+          #    published (or is yanked): never build over it. A failing
+          #    ls-remote aborts the job (set -e), so an outage cannot read as
+          #    "no tag".
+          existing="$(git ls-remote --tags origin "refs/tags/$TAG")"
+          if [ -n "$existing" ]; then
+            RELEASE=false; REASON="tag $TAG already exists on the remote"
+            echo "::notice title=No release::$TAG already exists on the remote, so this run releases nothing. That is normal for any merge that does not bump the version. If you expected a release: a tag means v$V was already published or yanked (a yank leaves its tag), so ship the next version through scripts/release-pr.sh instead."
+            emit; exit 0
+          fi
+
+          # 2. Never release something older than a tag that already exists:
+          #    `releases/latest` would then point installed apps backwards.
+          all_tags="$(git ls-remote --tags --refs origin 'refs/tags/v*')"
+          newest="$(printf '%s\n' "$all_tags" | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$V" | sort -V | tail -n 1)" != "$V" ]; then
+            RELEASE=false; REASON="remote already has v$newest, newer than $V"
+            emit; exit 0
+          fi
+
+          # 3. A published release under this tag name also blocks (a draft is
+          #    fine: create-release replaces it). This token cannot see drafts.
+          err="$(mktemp)"
+          if state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>"$err")"; then
+            if [ "$state" = false ]; then
+              RELEASE=false; REASON="a published release $TAG already exists"
+              emit; exit 0
+            fi
+          elif grep -qi 'release not found' "$err"; then
+            :
+          else
+            cat "$err"; fail "could not look up release $TAG"
+          fi
+
+          RELEASE=true; REASON="no tag and no published release for $TAG"
+          emit
+
+  create-release:
+    name: create-release
+    needs: decide
+    if: needs.decide.outputs.release == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create the draft release
+        id: create
+        env:
+          V: ${{ needs.decide.outputs.version }}
+          TAG: ${{ needs.decide.outputs.tag }}
+          DRY: ${{ needs.decide.outputs.dry }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # A PR run's github.sha is a synthetic merge commit; a draft should
+          # target a commit that lives on a branch.
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          if [ "$DRY" = true ]; then
+            [[ "$TAG" == dryrun-* ]] || fail "rehearsal tag must start with dryrun-, got $TAG"
+          else
+            [ "$TAG" = "v$V" ] || fail "tag $TAG is not v$V"
+            # decide already checked this; a tag that appeared since (or a
+            # decide bug) must still stop the draft deletion below.
+            [ -z "$(git ls-remote --tags origin "refs/tags/$TAG")" ] || fail "remote tag $TAG exists; refusing to touch its release"
+          fi
+
+          # Replace a draft left by an earlier attempt for this tag. Only drafts
+          # are ever deleted; a published release with this tag stops the run.
+          gh api --paginate "repos/$GH_REPO/releases" > all-releases.json
+          jq -s -e --arg t "$TAG" 'add | map(select(.tag_name == $t and .draft == false)) | length == 0' all-releases.json >/dev/null \
+            || fail "a published release $TAG exists; refusing to touch it"
+          for id in $(jq -s -r --arg t "$TAG" 'add | .[] | select(.tag_name == $t and .draft == true) | .id' all-releases.json); do
+            echo "deleting stale draft $id for $TAG"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          done
+
+          # Notes: this version's CHANGELOG.md section (cz bump --changelog
+          # writes `## vX.Y.Z (date)` headings) plus the install notes. A real
+          # release without a section fails; a rehearsal may lack one.
+          if [ -f CHANGELOG.md ]; then
+            awk -v h="## v$V (" 'index($0, h) == 1 { f = 1; next } /^## v/ { f = 0 } f' CHANGELOG.md > section.md
+          else
+            : > section.md
+          fi
+          if [ "$DRY" != true ] && [ -z "$(tr -d '[:space:]' < section.md)" ]; then
+            fail "CHANGELOG.md has no '## v$V (...)' section"
+          fi
+          {
+            cat section.md
+            printf '\n---\n\n'
+            printf '%s\n\n' '> Versions ≤ 0.1.4 have no updater: install this version manually once; later updates install from inside the app.'
+            cat <<'EOF'
+          ## Installation
+
+          1. Download the `.dmg` for your Mac: **Apple Silicon** (`aarch64`) or **Intel** (`x64`).
+          2. Open the `.dmg` and drag **Sift** to `/Applications`.
+          3. First launch only: macOS will block the app because it is not from the App Store.
+             Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+             After that, Sift opens normally with a double-click.
+          EOF
+          } > body.md
+
+          title="Sift v$V"
+          [ "$DRY" != true ] || title="Sift v$V (rehearsal $TAG)"
+          # A draft names its tag but creates none: the tag appears at publish.
+          id="$(gh api -X POST "repos/$GH_REPO/releases" \
+            -f tag_name="$TAG" -f target_commitish="$SHA" -f name="$title" \
+            -F body=@body.md -F draft=true -F prerelease=false --jq .id)"
+          [[ "$id" =~ ^[0-9]+$ ]] || fail "no release id returned"
+          echo "release_id=$id" >> "$GITHUB_OUTPUT"
+          echo "created draft $TAG (id $id) targeting $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: [decide, create-release]
+    if: needs.decide.outputs.release == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: macos-latest
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: aarch64-apple-darwin
-            label: apple-silicon
-          - target: x86_64-apple-darwin
-            label: intel
-
-    runs-on: macos-latest
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: '9'
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -36,30 +269,267 @@ jobs:
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
 
+      # Without a per-target key both matrix jobs would share one cache, and an
+      # Intel build could reuse aarch64 artifacts (and the arm64 libpdfium).
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      - name: Build and bundle
-        uses: tauri-apps/tauri-action@v0
+      - name: Require the updater signing key
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_SIGNING_IDENTITY: '-'
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Sift ${{ github.ref_name }}'
-          releaseBody: |
-            ## Installation
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error::secret TAURI_SIGNING_PRIVATE_KEY is empty; createUpdaterArtifacts needs it"; exit 1; }
 
-            1. Download the `.dmg` for your Mac — **Apple Silicon** (`aarch64`) or **Intel** (`x86_64`).
-            2. Open the `.dmg` and drag **Sift** to `/Applications`.
-            3. First launch only: macOS will block the app because it is not from the App Store.
-               Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
-               After that, Sift opens normally with a double-click.
-          releaseDraft: true
-          prerelease: false
+      # releaseId uploads into the draft that create-release made. The action's
+      # own latest.json is off: it points at draft URLs and proves nothing.
+      - name: Build and bundle
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          APPLE_SIGNING_IDENTITY: '-'
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
           args: --target ${{ matrix.target }}
+
+  assemble-verify:
+    name: assemble-verify
+    needs: [decide, create-release, build]
+    if: needs.decide.outputs.release == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    outputs:
+      latest_sha256: ${{ steps.assemble.outputs.latest_sha256 }}
+      assets_sha256: ${{ steps.assemble.outputs.assets_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: '9'
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install minisign
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: brew install minisign
+
+      # The verifier is the gate: prove it still rejects bad input before it
+      # is trusted with the real assets.
+      - name: Test the verifier
+        env:
+          SIFT_REQUIRE_SIGNING_TOOLS: '1'
+        run: node --test scripts/build-latest-json.test.mjs
+
+      - name: Download, verify and assemble latest.json
+        id: assemble
+        env:
+          V: ${{ needs.decide.outputs.version }}
+          TAG: ${{ needs.decide.outputs.tag }}
+          DRY: ${{ needs.decide.outputs.dry }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          if [ "$DRY" = true ]; then
+            [[ "$TAG" == dryrun-* ]] || fail "rehearsal tag must start with dryrun-, got $TAG"
+          else
+            [ "$TAG" = "v$V" ] || fail "tag $TAG is not v$V"
+          fi
+
+          mkdir assets
+          gh release download "$TAG" --dir assets --pattern '*.app.tar.gz*'
+          ls -l assets
+
+          if [ -f CHANGELOG.md ]; then
+            awk -v h="## v$V (" 'index($0, h) == 1 { f = 1; next } /^## v/ { f = 0 } f' CHANGELOG.md > notes.md
+          else
+            : > notes.md
+          fi
+
+          # Signature proof against the key embedded in the app. The URLs carry
+          # the real tag even in a rehearsal; the manifest is never uploaded
+          # anywhere a user can reach it then (the draft is deleted afterwards).
+          node scripts/build-latest-json.mjs --assets assets --version "$V" --tag "v$V" \
+            --repo "$GH_REPO" --conf src-tauri/tauri.conf.json --out latest.json --notes-file notes.md
+
+          # Architecture proof. A valid signature does not say which CPU a
+          # tarball targets, and libpdfium is fetched per target at build time.
+          check_arch() { # <tarball> <expected lipo arch>
+            local tarball="$1" want="$2" dir app f got n pdfium
+            dir="$(mktemp -d)"
+            tar -xzf "$tarball" -C "$dir"
+            app="$(find "$dir" -maxdepth 1 -name '*.app' -type d)"
+            [ "$(printf '%s\n' "$app" | grep -c .)" -eq 1 ] || fail "$tarball: expected exactly one .app"
+            n=0
+            for f in "$app"/Contents/MacOS/*; do
+              got="$(lipo -archs "$f")"
+              [ "$got" = "$want" ] || fail "$tarball: $f is '$got', expected '$want'"
+              n=$((n + 1))
+            done
+            [ "$n" -ge 1 ] || fail "$tarball: no executable in Contents/MacOS"
+            pdfium="$(find "$app/Contents" -name libpdfium.dylib)"
+            [ "$(printf '%s\n' "$pdfium" | grep -c .)" -eq 1 ] || fail "$tarball: expected exactly one libpdfium.dylib"
+            got="$(lipo -archs "$pdfium")"
+            [ "$got" = "$want" ] || fail "$tarball: libpdfium.dylib is '$got', expected '$want'"
+            got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+            [ "$got" = "$V" ] || fail "$tarball: bundle version is '$got', expected '$V'"
+            echo "ok   $tarball: $want, libpdfium $want, version $V"
+          }
+          check_arch "assets/Sift_${V}_x64.app.tar.gz" x86_64
+          check_arch "assets/Sift_${V}_aarch64.app.tar.gz" arm64
+
+          # Each platform must also have its installer on the release.
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort > names.txt
+          for want in "Sift_${V}_aarch64.dmg" "Sift_${V}_x64.dmg"; do
+            grep -qxF "$want" names.txt || fail "release has no $want"
+          done
+
+          gh release upload "$TAG" latest.json --clobber
+          sha="$(shasum -a 256 latest.json | cut -d' ' -f1)"
+          # The exact bytes that were verified: publish re-checks the draft's
+          # tarballs and signatures against these before it flips the draft.
+          sums="$(cd assets && shasum -a 256 -- * | LC_ALL=C sort -k2)"
+          [ "$(printf '%s\n' "$sums" | wc -l | tr -d ' ')" -eq 4 ] || fail "expected 4 verified files (2 tarballs, 2 .sig), got: $sums"
+          {
+            echo "latest_sha256=$sha"
+            echo "assets_sha256<<ASSETS_SUMS_EOF"
+            printf '%s\n' "$sums"
+            echo "ASSETS_SUMS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          { echo "verified latest.json for v$V (sha256 $sha):"; echo '```json'; cat latest.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: publish
+    needs: [decide, create-release, assemble-verify]
+    # `needs` succeeded is implied by this being a plain expression; the dry
+    # check keeps rehearsals (and anything not a real release) out.
+    if: needs.decide.outputs.release == 'true' && needs.decide.outputs.dry == 'false' && needs.assemble-verify.outputs.latest_sha256 != '' && needs.assemble-verify.outputs.assets_sha256 != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      V: ${{ needs.decide.outputs.version }}
+      TAG: ${{ needs.decide.outputs.tag }}
+      VERIFIED_SHA: ${{ needs.assemble-verify.outputs.latest_sha256 }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Publish the verified draft
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSETS_SUMS: ${{ needs.assemble-verify.outputs.assets_sha256 }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          [ "$TAG" = "v$V" ] || fail "tag $TAG is not v$V"
+          # What gets published is exactly what assemble-verify proved: the
+          # manifest, and every tarball and signature it checked.
+          mkdir verified verified-assets
+          gh release download "$TAG" --dir verified --pattern latest.json
+          got="$(sha256sum verified/latest.json | cut -d' ' -f1)"
+          [ "$got" = "$VERIFIED_SHA" ] || fail "draft latest.json sha256 $got differs from the verified $VERIFIED_SHA"
+          [ -n "$ASSETS_SUMS" ] || fail "assemble-verify passed no tarball checksums"
+          gh release download "$TAG" --dir verified-assets --pattern '*.app.tar.gz*'
+          have="$(cd verified-assets && sha256sum -- * | LC_ALL=C sort -k2)"
+          if [ "$have" != "$ASSETS_SUMS" ]; then
+            printf 'verified:\n%s\n\nin the draft now:\n%s\n' "$ASSETS_SUMS" "$have"
+            fail "the draft's tarballs or signatures changed after verification"
+          fi
+          # Publishing creates the v$V tag at the release target.
+          gh release edit "$TAG" --draft=false --latest
+
+      # Anonymous on purpose: no token, so this sees what an installed app sees.
+      - name: Smoke-test the public manifest
+        id: smoke
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          url="https://github.com/$GH_REPO/releases/latest/download/latest.json"
+          ok=false
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if curl -fsSL "$url" -o latest.json 2>/dev/null \
+              && jq -e --arg v "$V" '.version == $v and (.platforms | has("darwin-aarch64") and has("darwin-x86_64"))' latest.json >/dev/null; then
+              ok=true; break
+            fi
+            echo "attempt $attempt: manifest not yet at $V; waiting"
+            sleep 10
+          done
+          [ "$ok" = true ] || fail "$url does not serve version $V with both platforms"
+          [ "$(sha256sum latest.json | cut -d' ' -f1)" = "$VERIFIED_SHA" ] || fail "public latest.json differs from the verified one"
+          # A one-byte ranged GET follows the redirect like an updater would.
+          for key in darwin-aarch64 darwin-x86_64; do
+            asset="$(jq -r --arg k "$key" '.platforms[$k].url' latest.json)"
+            case "$asset" in "https://github.com/$GH_REPO/releases/download/$TAG/"*) ;; *) fail "unexpected asset url $asset" ;; esac
+            curl -fsSL -r 0-0 -o /dev/null "$asset" || fail "$key asset is not downloadable: $asset"
+          done
+          echo "published $TAG and the public manifest checks out" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Anything short of a passed smoke test (failure or cancellation) returns
+      # the release to draft. On a draft this is a no-op.
+      - name: Yank the release unless the smoke test passed
+        if: always() && steps.publish.conclusion != 'skipped' && steps.smoke.conclusion != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "::warning::publish or smoke test failed; returning $TAG to draft"
+          gh release edit "$TAG" --draft=true
+          # Publishing created the tag and returning to draft does not remove it,
+          # so decide will refuse to release this version again.
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error title=$TAG is yanked and its tag remains::Runbook. 1) Find out what failed (the smoke test step) and whether anyone could have downloaded the release while it was public. 2) If it was served, treat the version as burnt: fix forward and ship the next patch with scripts/release-pr.sh. 3) If nothing was ever served (the release was public only for this run and the manifest never reached clients), delete the remote tag with: gh api -X DELETE repos/$GH_REPO/git/refs/tags/$TAG, then re-run this workflow from main with workflow_dispatch and dry_run=false."
+          else
+            echo "::error title=$TAG was not published::The release is still a draft and no tag was created; re-run the failed run, or workflow_dispatch from main with dry_run=false."
+          fi
+
+  cleanup:
+    name: cleanup
+    needs: [decide, create-release, build, assemble-verify]
+    if: always() && needs.decide.outputs.dry == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the rehearsal draft
+        env:
+          TAG: ${{ needs.decide.outputs.tag }}
+          RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Refuse anything that is not this run's own rehearsal name.
+          [[ "$TAG" == "dryrun-$RUN_ID" ]] || { echo "::error::unexpected rehearsal tag '$TAG'"; exit 1; }
+          gh api --paginate "repos/$GH_REPO/releases" > all-releases.json
+          for id in $(jq -s -r --arg t "$TAG" 'add | .[] | select(.tag_name == $t and .draft == true) | .id' all-releases.json); do
+            echo "deleting rehearsal draft $id ($TAG)"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          done
+          # Drafts must not create tags. If one did, remove that tag (exact name).
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "::warning::rehearsal tag $TAG exists on the remote; deleting it"
+            gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$TAG"
+          fi

@@ -18,6 +18,8 @@ export interface ProgressState {
 
 export interface Toast extends LogEvent {
   id: number;
+  action?: { label: string; onClick: () => void };
+  persistent?: boolean;
 }
 
 let _nextId = 0;
@@ -31,15 +33,61 @@ export function registerJobActiveCheck(fn: () => boolean) {
 export const toasts = writable<Toast[]>([]);
 export const progress = writable<ProgressState | null>(null);
 
+// Non-toast log: entries are recorded without surfacing UI (e.g. background
+// failures the user did not ask about). Capped so it cannot grow unbounded.
+const MAX_LOG_ENTRIES = 200;
+export const logEntries = writable<LogEvent[]>([]);
+
+export function logEntry(level: LogLevel, message: string) {
+  const entry: LogEvent = { level, message, timestamp: Date.now() };
+  logEntries.update(es => [entry, ...es].slice(0, MAX_LOG_ENTRIES));
+}
+
 export function dismissToast(id: number) {
   toasts.update(ts => ts.filter(t => t.id !== id));
 }
 
-export function showToast(level: LogLevel, message: string) {
-  const toast: Toast = { level, message, timestamp: Date.now(), id: _nextId++ };
+export function showToast(
+  level: LogLevel,
+  message: string,
+  opts?: { action?: { label: string; onClick: () => void }; persistent?: boolean }
+) {
+  const toast: Toast = {
+    level,
+    message,
+    timestamp: Date.now(),
+    id: _nextId++,
+    action: opts?.action,
+    persistent: opts?.persistent,
+  };
   toasts.update(ts => [toast, ...ts].slice(0, 5));
+  const shouldAutoDismiss = !opts?.persistent && !opts?.action;
   const delay = level === 'error' ? 0 : level === 'warn' ? 8000 : 4000;
-  if (delay > 0) setTimeout(() => dismissToast(toast.id), delay);
+  if (shouldAutoDismiss && delay > 0) setTimeout(() => dismissToast(toast.id), delay);
+}
+
+export function showToastReturningId(
+  level: LogLevel,
+  message: string,
+  opts?: { action?: { label: string; onClick: () => void }; persistent?: boolean }
+): number {
+  const toast: Toast = {
+    level,
+    message,
+    timestamp: Date.now(),
+    id: _nextId++,
+    action: opts?.action,
+    persistent: opts?.persistent,
+  };
+  toasts.update(ts => [toast, ...ts].slice(0, 5));
+  const shouldAutoDismiss = !opts?.persistent && !opts?.action;
+  const delay = level === 'error' ? 0 : level === 'warn' ? 8000 : 4000;
+  if (shouldAutoDismiss && delay > 0) setTimeout(() => dismissToast(toast.id), delay);
+  return toast.id;
+}
+
+export function updateToastMessage(id: number, message: string) {
+  toasts.update(ts => ts.map(t => t.id === id ? { ...t, message } : t));
 }
 
 export async function initLogStore() {
