@@ -54,3 +54,4 @@ With user confirmation:
 - Outward-facing, so it is run by the coordinator with per-action user confirmation, never by a subagent.
 - Steps 1–2 produce commits only if notes are recorded in the repo; the roadmap Progress update is batched (`rdm` type).
 - Rehearsal runs need `TAURI_SIGNING_PRIVATE_KEY` from repo secrets. They run only for same-repo PR branches.
+- **Outcome (2026-10-05):** v0.2.0 published by the pipeline (run 37272671132), and `main` protected with the four checks. The first rehearsal caught a signing-key mismatch between the repo secret and the pinned pubkey; the key was rotated to `1884DC5376300376` before anything shipped (report 05 addendum). The behavioural gate is partly met: the user installed the 0.2.0 DMG. Cmd+C/V in Settings, the admin-prompt cancel, and the first in-app update from 0.2.0 are carried over to the 0.2.1 release.

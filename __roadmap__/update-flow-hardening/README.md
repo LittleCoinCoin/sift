@@ -36,7 +36,7 @@ graph TD
     commit_convention[Commit Convention]:::done
     release_config[Release Config]:::done
     install_feedback[Install Feedback]:::done
-    next[CI Release and E2E]:::inprogress
+    next[CI Release and E2E]:::done
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -50,7 +50,7 @@ graph TD
 | `commit_convention.md` | 📄 Leaf Task | ✅ Done |
 | `release_config.md` | 📄 Leaf Task | ✅ Done |
 | `install_feedback.md` | 📄 Leaf Task | ✅ Done |
-| `next/` | 📁 Directory | 🔄 In Progress |
+| `next/` | 📁 Directory | ✅ Done |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |

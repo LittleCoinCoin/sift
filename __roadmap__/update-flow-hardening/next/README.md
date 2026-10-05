@@ -26,7 +26,7 @@ graph TD
     release_workflow[Release Workflow]:::done
     e2e_ui[E2E UX Harness]:::done
     e2e_native[E2E Native Update]:::done
-    next[Docs Closure Level]:::inprogress
+    next[Docs Closure Level]:::done
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -41,7 +41,7 @@ graph TD
 | `release_workflow.md` | 📄 Leaf Task | ✅ Done |
 | `e2e_ui.md` | 📄 Leaf Task | ✅ Done |
 | `e2e_native.md` | 📄 Leaf Task | ✅ Done |
-| `next/` | 📁 Directory | 🔄 In Progress |
+| `next/` | 📁 Directory | ✅ Done |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |
