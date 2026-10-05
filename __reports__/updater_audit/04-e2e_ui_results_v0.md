@@ -4,9 +4,9 @@ Date: 2026-10-05
 
 ## Executive Summary
 
-- **Result:** all 12 update-UX scenarios PASS against the real `updater.svelte.ts` and the real
+- **Result:** all 13 update-UX scenarios PASS against the real `updater.svelte.ts` and the real
   `Toast.svelte`, in headless Chrome, with machine-readable pass/fail (`bash scripts/e2e-ui.sh`
-  exits 0; three consecutive runs agreed; a full run takes about 15 s).
+  exits 0; repeated runs agreed; a full run takes about 15 s).
 - **The harness can fail:** run against the pre-campaign store (`bfef3c5`), the four install-failure
   scenarios FAIL with "ready shown after failure" (4/4 detected). That store shows the ready toast
   on `Finished` even when the install then fails.
@@ -16,6 +16,10 @@ Date: 2026-10-05
   and are type-checked against the real plugin signatures. The harness reads the rendered `.toast`
   DOM and clicks the rendered `.toast-action` / `.toast-dismiss` buttons. All copy is quoted
   through `INSTALL_MESSAGES`.
+- **Limitations:**
+  - `latest-older` is decided by the fake: the real "is the server version newer" comparison lives
+    in the Rust plugin, so this scenario proves only how the store reacts to a `null` result.
+  - Clicks are synthetic `.click()` calls on the rendered buttons, not trusted user events.
 - **Not covered:** the real plugin's bytes-on-disk install, signature checking and relaunch (those
   belong to the native update E2E, report 05), and macOS-specific error text beyond the strings the
   fakes inject.
@@ -36,8 +40,11 @@ Command: `bash scripts/e2e-ui.sh --verbose` (equivalently `pnpm e2e:ui`).
 | check-fail-manual | PASS | 7 | stale Install toast replaced by a warn toast, auto-dismissed after about 8 s |
 | up-to-date | PASS | 6 | silent on the background check; info toast on the manual check, auto-dismissed after about 4 s |
 | latest-older | PASS | 6 | a server version older than the running one behaves as up to date |
-| double-install-click | PASS | 6 | three clicks (two in one tick, one on the detached button) cause one download |
+| double-install-click | PASS | 6 | two Install clicks in one tick (before Svelte removes the button) cause one download |
 | recheck-while-toast-open | PASS | 13 | re-checks with Install open, mid-download and after ready keep one updater toast; a dismissed progress or ready toast is re-shown |
+| download-network-fail | PASS | 10 | connection drops before `Finished`: `failedPrefix` copy, no Installing toast, never ready, one toast |
+
+Per the adversarial review's mutation test, removing both store guards makes the same-tick double click in `double-install-click` fail. (An earlier third click on the detached button was removed: detached nodes never reach Svelte's delegated handler, so it proved nothing.)
 
 Every scenario also asserts that at most one toast is on screen at any observed state, that no
 uncaught error occurred, and that at least one expectation ran (a run with zero checks fails).
@@ -56,6 +63,7 @@ Each line is a distinct DOM state of the toast stack, in order. `{…}` is the a
 | check-fail-manual | available → `warn: Couldn't check for updates: request timed out` → (empty) |
 | up-to-date, latest-older | `info: Sift is up to date.` → (empty) |
 | double-install-click | same as success, one download |
+| download-network-fail | available → `Downloading update…` → `… 25%` → `error: Update failed: error sending request for url (https://github.com/…): connection closed before message completed` |
 | recheck-while-toast-open | available → `Downloading update…` → (empty, dismissed) → `Downloading update…` (re-shown) → percentages → `Installing update…` → ready → (empty, dismissed) → ready (re-shown) |
 
 ## Negative control
@@ -73,13 +81,13 @@ store, then runs all scenarios.
 | signature-fail | FAIL: ready shown after failure |
 
 The other scenarios give a wider picture of what the campaign changed. Against the old store,
-10 of 12 scenarios fail in total; `up-to-date` and `latest-older` pass. Its remaining defects:
+11 of 13 scenarios fail in total; `up-to-date` and `latest-older` pass (`download-network-fail` fails there because the raw error is shown without the `failedPrefix`). Its remaining defects:
 the Install toast stays open beside the progress toast (two toasts at once), a manual re-check
 adds more Install toasts, a manual-check failure shows the raw error without the prefix, and a
 background failure leaves no log entry.
 
 Exit codes of the script: 0 all PASS; 1 a scenario failed (in negative-control mode: the failure
-scenarios failed as intended); 2 environment or harness error (including runner and harness
+scenarios failed as intended); 2 environment or harness error (including Chrome yielding no DOM and runner and harness
 scenario lists drifting apart); 3 the negative control did not detect the old defect.
 
 ## Commands
@@ -96,8 +104,9 @@ git diff --exit-code bfef3c5 -- pnpm-lock.yaml
 ```
 
 Visual pass: `pnpm exec vite --config vite.e2e.config.ts --port 4174` (launch entry `sift-e2e-ui`),
-then open `http://localhost:4174/e2e.html?scenario=<name>`; without `?scenario=` the page lists
-all of them. Dev mode runs in real time (the background check fires after 4 s).
+then navigate the Browser pane to `http://localhost:4174/e2e.html` (the scenario list) or
+`http://localhost:4174/e2e.html?scenario=<name>`. `launch.json` cannot carry a path and `/` serves the
+production `index.html`, so the navigation step is required. Dev mode runs in real time (the background check fires after 4 s).
 
 ## Measured notes
 
@@ -106,4 +115,6 @@ all of them. Dev mode runs in real time (the background check fires after 4 s).
   so the auto-dismiss durations are asserted (3.5 to 5.5 s and 7.5 to 9.5 s).
 - With `--headless=new --dump-dom`, this Chrome prints the DOM and then does not exit. The runner
   writes the DOM to a file, treats the closing `</html>` as completion and kills the browser.
+- An interrupted run (SIGINT or SIGTERM) exits 130 or 143, kills the preview server and any Chrome
+  started with that run's own profile directory, and removes its temp files.
 - The harness page runs one scenario per load, because `initUpdaterStore()` is once-only.
