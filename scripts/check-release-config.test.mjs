@@ -1,7 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -159,4 +167,26 @@ test("negative: missing Cargo.lock is a failure, not a crash", () => {
   const r = run((dir) => rmSync(path.join(dir, "src-tauri/Cargo.lock")));
   assert.equal(r.status, 1);
   assert.match(r.stdout, /FAIL .*Cargo\.lock/);
+});
+
+// Regression: when argv[1] reached the script through a symlink the entry
+// guard was false, main() never ran, and the checker exited 0 doing nothing.
+test("runs through a symlinked scripts directory", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "release-config-link-"));
+  try {
+    const link = path.join(dir, "scripts-link");
+    symlinkSync(path.join(repo, "scripts"), link);
+    const linked = path.join(link, "check-release-config.mjs");
+    const run = (...args) =>
+      spawnSync(process.execPath, [linked, "--root", repo, ...args], {
+        encoding: "utf8",
+      });
+    const pkg = JSON.parse(readFileSync(path.join(repo, "package.json"), "utf8"));
+    const ok = run("--print-version");
+    assert.equal(ok.status, 0);
+    assert.equal(ok.stdout, `${pkg.version}\n`);
+    assert.equal(run("--bogus").status, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

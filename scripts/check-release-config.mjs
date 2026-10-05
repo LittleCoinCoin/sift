@@ -12,7 +12,7 @@
 // Human mode prints one line per check on stdout: "ok   <check>" or
 // "FAIL <check>: <detail>". With --print-version, failures go to stderr.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -193,9 +193,20 @@ export function main(argv = process.argv.slice(2)) {
   return failed.length === 0 ? 0 : 1;
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+// Compare real paths: argv[1] may reach this file through a symlink (e.g.
+// macOS /var -> /private/var), which would otherwise skip main() and exit 0.
+function isEntryPoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return (
+      realpathSync(process.argv[1]) ===
+      realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   process.exitCode = main();
 }
