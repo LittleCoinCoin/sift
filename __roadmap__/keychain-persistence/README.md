@@ -11,8 +11,8 @@ This campaign ships the real backend in v0.2.1.
 API keys saved in Settings survive relaunches and updates, the Keychain dialog never freezes the window, and v0.2.1 ships it.
 
 ## Pre-conditions
-- [ ] Integration branch `milestone/keychain-persistence` cut from `main` at `57c225b`
-- [ ] Environment contract measured in a fresh hand-made worktree: `pnpm install --frozen-lockfile && pnpm build && (cd src-tauri && cargo test --lib)` green, with the cargo paths inside that worktree
+- [x] Integration branch `milestone/keychain-persistence` cut from `main` at `57c225b`
+- [x] Environment contract measured in a fresh hand-made worktree: `pnpm install --frozen-lockfile && pnpm build && (cd src-tauri && cargo test --lib)` green, with the cargo paths inside that worktree (2026-10-06, experiment worktree preflight: 43 passed, target dir `experiment-keychain-signing/src-tauri/target`)
 
 ## Success Gates
 - ⬜ `(cd src-tauri && cargo test --lib)` passes on the integration tip, including `backend_persists_until_delete` [run]
@@ -45,8 +45,8 @@ API keys saved in Settings survive relaunches and updates, the Keychain dialog n
 ## Status
 ```mermaid
 graph TD
-    apple_native_backend[Apple Native Backend]:::planned
-    e2e_keychain_assertions[E2E Keychain Assertions]:::planned
+    apple_native_backend[Apple Native Backend]:::inprogress
+    e2e_keychain_assertions[E2E Keychain Assertions]:::inprogress
     next[Release v0.2.1]:::planned
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
@@ -58,8 +58,8 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `apple_native_backend.md` | 📄 Leaf Task | ⬜ Planned |
-| `e2e_keychain_assertions.md` | 📄 Leaf Task | ⬜ Planned |
+| `apple_native_backend.md` | 📄 Leaf Task | 🔄 In Progress |
+| `e2e_keychain_assertions.md` | 📄 Leaf Task | 🔄 In Progress |
 | `next/` | 📁 Directory | ⬜ Planned |
 
 ## Amendment Log
