@@ -9,7 +9,7 @@
 - ⬜ `pnpm check && pnpm build` pass [run]
 - ⬜ `grep -c 'KEYCHAIN_SERVICE}api-key' scripts/e2e-updater.sh` prints `0`, and `grep -c 'in-memory mock' scripts/e2e-updater.sh` prints `0` [static]
 - ⬜ `grep -q 'KEYCHAIN_AFTER_UPDATE=' scripts/e2e-updater.sh && grep -q 'ipc alive' src/lib/e2e/updater-driver.ts` exits 0 [static]
-- ⬜ `git diff --exit-code milestone/keychain-persistence -- pnpm-lock.yaml src-tauri` exits 0 (this leaf touches neither the lockfile nor the backend) [run]
+- ⬜ `git diff --exit-code df80002 -- pnpm-lock.yaml src-tauri` exits 0 (this leaf touches neither the lockfile nor the backend; the base is the leaf's branch point because the integration tip moves as siblings merge) [run]
 - ⬜ At L1 close, the maintainer runs `pnpm e2e:native` on the integration tip. It exits 0, and the transcript has `PASS  keychain item 'sift-e2e' written by 0.0.1`, `KEYCHAIN_AFTER_UPDATE=blocked` (expected under ad-hoc signing) and `PASS  ipc stays responsive while the keychain read is pending` [behavioral]
 **References**: `__reports__/api_key_storage/01-keychain_signing_measurement_v0.md` (defect 1, run 1b/2b timelines); `scripts/e2e-updater.sh` (`verify_keychain_isolation`, `run_happy_path`, `keychain_presence`, `wait_for_log_after`, `log_has`); `src/lib/e2e/updater-driver.ts` (`probeKeychain`, `post`); `src-tauri/src/settings.rs` (`get_settings`, a sync command on the main thread); experiment commit `272b88b` on `experiment/keychain-signing` (a working version of Step 1's isolation change)
 
@@ -32,17 +32,21 @@ This change is correct on today's mock build too, so the leaf has no ordering de
 **Implementation Logic**:
 1. **Driver (`src/lib/e2e/updater-driver.ts`, `probeKeychain`), branch at or above `TARGET_VERSION`:**
    - Start `invoke<string>('get_api_key')` without awaiting it.
-   - After 1000 ms, `await invoke('get_settings')`. In a `finally`, post `ipc alive`. Any return or rejection counts, because both mean the IPC answered.
+   - After 1000 ms, time `await invoke('get_settings')` with `performance.now()`. A rejection counts as an answer and is timed the same way. Post `ipc alive` if it answered within `IPC_ALIVE_MAX_MS = 2000`, otherwise post `ipc slow|<ms>`.
    - Then await the pending read and post `keychain ok` or `keychain error|...` as today.
-   - Why: `get_settings` is a sync command, so it runs on the main thread. If the pending Keychain read held the main thread, `ipc alive` would never arrive.
+   - Why: `get_settings` is a sync command, so it runs on the main thread. If the pending Keychain read held the main thread, `get_settings` would answer only when the dialog is answered, so it would be slow or never answer.
+   - Timing it in the driver is what makes the check discriminate. An untimed `ipc alive` would still arrive on time whenever a human answered the dialog within the script's wait (amended after verification, 2026-10-06).
    - The branch below `TARGET_VERSION` is unchanged.
-2. **Script (`scripts/e2e-updater.sh`, `run_happy_path`), after `booted $OLD_VERSION`:**
+2. **Script, preflight (`main`) and after `booted $OLD_VERSION` (`run_happy_path`):**
+   - Preflight, right after the real-keychain baseline: remove any stale `$KEYCHAIN_SERVICE` item left by an aborted run (the same bounded delete loop as the cleanup), and `die` if one remains. Otherwise a stale item would make the presence assertion vacuous, and it could also prompt on B's write.
    - Wait (bounded, about 10 s) for `keychain roundtrip ok`, and `fail` if it is missing or `roundtrip mismatch` appears.
    - Then `keychain_presence "$KEYCHAIN_SERVICE"` must print `present`: `pass "keychain item '$KEYCHAIN_SERVICE' written by $OLD_VERSION"`, otherwise `fail`. This is an attributes-only lookup, so it never prompts.
-3. **Script, after `booted $NEW_VERSION`.** Keep the existing 20 s `wait_for_log_after ... "keychain (ok|error)"`, then:
+3. **Script, after `booted $NEW_VERSION`.** Only if 0.2.0 booted (`booted_new=1`; otherwise its `fail` is already counted and no outcome is printed): keep the existing 20 s `wait_for_log_after ... "keychain (ok|error)"`, then:
    - Emit exactly one line, `KEYCHAIN_AFTER_UPDATE=ok`, `KEYCHAIN_AFTER_UPDATE=blocked` (no result) or `KEYCHAIN_AFTER_UPDATE=error`. For `blocked`, add a `say` noting that a login-keychain dialog is expected under ad-hoc signing.
    - `fail` on `error`, because the stored key was lost or unreadable.
-   - `wait_for_log_after "booted $NEW_VERSION\$" "ipc alive\$"` with a bound of about 10 s, then `pass "ipc stays responsive while the keychain read is pending"` or `fail`.
+   - `wait_for_log_after "booted $NEW_VERSION\$" "ipc (alive|slow)"` with a bound of about 10 s.
+   - Then `pass "ipc stays responsive while the keychain read is pending"` on `ipc alive`. When the outcome was `ok`, the message notes that the check did not exercise a freeze.
+   - `fail` on `ipc slow|<ms>` or on no line.
    - Replace the informational `say "keychain probe: ..."` line with these assertions.
 4. Change nothing in the read-only cases, and add no environment knobs.
 **Deliverables**: `src/lib/e2e/updater-driver.ts` (`probeKeychain` posting `ipc alive`); `scripts/e2e-updater.sh` (`run_happy_path` assertions, `KEYCHAIN_AFTER_UPDATE` line)
