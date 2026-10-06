@@ -41,7 +41,7 @@
 2. Complete the Reminder "Persist API keys in the macOS Keychain (enable keyring apple-native)" in list "Sift".
 3. Create a Reminder "Consider a Developer ID to remove the per-update Keychain prompt and the Gatekeeper warning", linking report 01.
 4. Remove the `experiment/keychain-signing` worktree and branch.
-5. Mark the campaign nodes done with `dirtree-rdm`, on a branch that reaches `main` through a PR. The house commit type is `rdm(keychain-persistence): …`.
+5. Mark the campaign nodes done with `dirtree-rdm` and push that `rdm(keychain-persistence): …` commit straight to `main`. Per `CONTRIBUTING.md` (Direct pushes to `main`) and `AGENTS.md` (no ceremony for bookkeeping), roadmap status needs no PR.
 **Deliverables**: `__roadmap__/keychain-persistence/README.md` and `next/README.md` (statuses via `dirtree-rdm` only)
 **Consistency Checks**: `curl -fsSL https://github.com/LittleCoinCoin/sift/releases/latest/download/latest.json | grep -q '"version": *"0.2.1"'` (expected: PASS)
 **Commit**: `docs(keychain-persistence): mark the campaign done after v0.2.1 shipped`
