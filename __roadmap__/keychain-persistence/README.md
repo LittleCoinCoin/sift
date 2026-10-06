@@ -3,7 +3,7 @@
 ## Context
 `keyring = "3"` is built without a platform feature, so every API key saved in Settings goes to keyring's in-memory mock and is lost (`__reports__/api_key_storage/00-keyring_mock_backend_v0.md`). The signing measurement (`01-keychain_signing_measurement_v0.md`) settled the design.
 - With `apple-native` on, keys persist.
-- After each update, macOS asks once for the login keychain password ("Always Allow"), under ad-hoc and self-signed signing alike.
+- After each update, macOS asks for the login keychain password once per stored key ("Always Allow"), under ad-hoc and self-signed signing alike.
 - The maintainer accepts that prompt. Self-signing is dropped, and a paid Developer ID is out of scope.
 This campaign ships the real backend in v0.2.1.
 
