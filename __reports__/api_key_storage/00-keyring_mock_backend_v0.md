@@ -11,7 +11,7 @@ reversibility: easy (one Cargo feature)
 evidence: verified
 spotted-during: update-flow-hardening campaign, native E2E keychain probe (e2e_native leaf)
 date: 2026-10-05
-status: deferred
+status: resolved
 ---
 
 ## TL;DR
@@ -49,3 +49,6 @@ Open a dedicated thread: enable `apple-native`, verify persistence with `SIFT_KE
 
 ## If Declined — Next Step
 Deferred (2026-10-05) by the maintainer to a future feature update. Revisit right after v0.2.0 ships. Tracked as a Reminder in the "Sift" list.
+
+## Resolution
+Accepted after v0.2.0 shipped and fixed in campaign `__roadmap__/keychain-persistence` (2026-10-06). `src-tauri/Cargo.toml` now declares `keyring = { version = "3", features = ["apple-native"] }`, and the test `backend_persists_until_delete` pins the real backend. The keychain probe is no longer vacuous: the native E2E asserts that 0.0.1 writes the item. The update-time question is answered in [`01-keychain_signing_measurement_v0.md`](01-keychain_signing_measurement_v0.md). Under ad-hoc signing, after each update macOS asks for the login keychain password once per stored key. The OCR key and the text-processing key are separate items, and "Always Allow" covers only the item it was asked for. Self-signing does not avoid it. The maintainer accepted that, so no signing change was made.
