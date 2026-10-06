@@ -266,11 +266,11 @@ build_b() {
 # Prove the compiled-in keyring service, not just that a string is present.
 #  - the only source of the literal "sift-e2e" in the binaries is option_env!("SIFT_KEYRING_SERVICE")
 #    in keyring_store.rs (asserted below), and SERVICE is the only consumer of that value;
-#  - in the debug build B the literal sits right before "api-key" / "extraction-api-key" in
-#    .rodata, which is the order of the constants SERVICE, USER, EXTRACTION_USER, so it is the
-#    SERVICE constant that carries it. The LTO release build A keeps the literal on its own,
-#    so for A the proof is the literal plus the single-consumer check.
-# Not proven here: that the keyring backend is real. It is the in-memory mock (see the report).
+#  - so for both builds the proof is the literal plus that single-consumer check. It does not
+#    depend on where the linker puts the literal in .rodata: the debug build B used to keep it
+#    right before "api-key", but the apple-native layout moves it (report 01, defect 1).
+# Whether the keyring backend is real is not decided here: the roundtrip and presence
+# assertions of the happy path prove it.
 verify_keychain_isolation() {
   local n
   n="$(grep -rl 'SIFT_KEYRING_SERVICE' "$ROOT/src-tauri/src" | wc -l | tr -d ' ')"
@@ -283,9 +283,9 @@ verify_keychain_isolation() {
   LC_ALL=C grep -aq "$KEYCHAIN_SERVICE" "$bin_a" \
     || die "build A does not embed '$KEYCHAIN_SERVICE': refusing to launch (it could use the real keychain)"
   pass "build A embeds '$KEYCHAIN_SERVICE', which only SIFT_KEYRING_SERVICE can have put there"
-  LC_ALL=C grep -aq "${KEYCHAIN_SERVICE}api-key" "$bin_b" \
-    || die "build B does not carry '$KEYCHAIN_SERVICE' as the service constant (next to api-key): refusing to launch"
-  pass "build B has '$KEYCHAIN_SERVICE' directly before 'api-key' (the SERVICE constant)"
+  LC_ALL=C grep -aq "$KEYCHAIN_SERVICE" "$bin_b" \
+    || die "build B does not embed '$KEYCHAIN_SERVICE': refusing to launch (it could use the real keychain)"
+  pass "build B embeds '$KEYCHAIN_SERVICE', which only SIFT_KEYRING_SERVICE can have put there"
 }
 
 # launch_app <bundle> <logprefix> [VAR=value ...]: start the app through LaunchServices
