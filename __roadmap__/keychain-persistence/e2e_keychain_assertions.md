@@ -2,15 +2,15 @@
 
 **Goal**: The native E2E proves that the API key really persists, records what happens to it after an update, and proves the IPC stays responsive while the Keychain read is pending, instead of only printing probe lines.
 **Pre-conditions**:
-- [ ] Working on `task/e2e_keychain_assertions`, branched from the integration tip `milestone/keychain-persistence`
-- [ ] `pnpm install --frozen-lockfile` done in the leaf worktree
+- [x] Working on `task/e2e_keychain_assertions`, branched from the integration tip `milestone/keychain-persistence`
+- [x] `pnpm install --frozen-lockfile` done in the leaf worktree
 **Success Gates**:
-- ⬜ `bash -n scripts/e2e-updater.sh` exits 0 [run]
-- ⬜ `pnpm check && pnpm build` pass [run]
-- ⬜ `grep -c 'KEYCHAIN_SERVICE}api-key' scripts/e2e-updater.sh` prints `0`, and `grep -c 'in-memory mock' scripts/e2e-updater.sh` prints `0` [static]
-- ⬜ `grep -q 'KEYCHAIN_AFTER_UPDATE=' scripts/e2e-updater.sh && grep -q 'ipc alive' src/lib/e2e/updater-driver.ts` exits 0 [static]
-- ⬜ `git diff --exit-code df80002 -- pnpm-lock.yaml src-tauri` exits 0 (this leaf touches neither the lockfile nor the backend; the base is the leaf's branch point because the integration tip moves as siblings merge) [run]
-- ⬜ At L1 close, the maintainer runs `pnpm e2e:native` on the integration tip. It exits 0, and the transcript has `PASS  keychain item 'sift-e2e' written by 0.0.1`, `KEYCHAIN_AFTER_UPDATE=blocked` (expected under ad-hoc signing) and `PASS  ipc stays responsive while the keychain read is pending` [behavioral]
+- ✅ `bash -n scripts/e2e-updater.sh` exits 0 [run]
+- ✅ `pnpm check && pnpm build` pass [run]
+- ✅ `grep -c 'KEYCHAIN_SERVICE}api-key' scripts/e2e-updater.sh` prints `0`, and `grep -c 'in-memory mock' scripts/e2e-updater.sh` prints `0` [static]
+- ✅ `grep -q 'KEYCHAIN_AFTER_UPDATE=' scripts/e2e-updater.sh && grep -q 'ipc alive' src/lib/e2e/updater-driver.ts` exits 0 [static]
+- ✅ `git diff --exit-code df80002 -- pnpm-lock.yaml src-tauri` exits 0 (this leaf touches neither the lockfile nor the backend; the base is the leaf's branch point because the integration tip moves as siblings merge) [run]
+- ✅ At L1 close, the maintainer runs `pnpm e2e:native` on the integration tip. It exits 0, and the transcript has `PASS  keychain item 'sift-e2e' written by 0.0.1`, `KEYCHAIN_AFTER_UPDATE=blocked` (expected under ad-hoc signing) and `PASS  ipc stays responsive while the keychain read is pending` [behavioral]
 **References**: `__reports__/api_key_storage/01-keychain_signing_measurement_v0.md` (defect 1, run 1b/2b timelines); `scripts/e2e-updater.sh` (`verify_keychain_isolation`, `run_happy_path`, `keychain_presence`, `wait_for_log_after`, `log_has`); `src/lib/e2e/updater-driver.ts` (`probeKeychain`, `post`); `src-tauri/src/settings.rs` (`get_settings`, a sync command on the main thread); experiment commit `272b88b` on `experiment/keychain-signing` (a working version of Step 1's isolation change)
 
 ## Step 1: Isolation guard that survives the apple-native layout

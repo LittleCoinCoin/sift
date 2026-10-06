@@ -2,14 +2,14 @@
 
 **Goal**: API keys go to the real macOS Keychain, and the six keyring commands run off the main thread, so a Keychain dialog cannot freeze the window.
 **Pre-conditions**:
-- [ ] Working on `task/apple_native_backend`, branched from the integration tip `milestone/keychain-persistence`
-- [ ] `pnpm install --frozen-lockfile && pnpm build` done in the leaf worktree (Tauri reads `frontendDist` at `cargo test` time)
+- [x] Working on `task/apple_native_backend`, branched from the integration tip `milestone/keychain-persistence`
+- [x] `pnpm install --frozen-lockfile && pnpm build` done in the leaf worktree (Tauri reads `frontendDist` at `cargo test` time)
 **Success Gates**:
-- ⬜ `(cd src-tauri && cargo test --lib)` passes, including `keyring_store::tests::backend_persists_until_delete` [run]
-- ⬜ `(cd src-tauri && cargo tree -e features -i keyring)` lists `keyring feature "apple-native"` [run]
-- ⬜ `git diff milestone/keychain-persistence -- src-tauri/Cargo.lock | grep '^+name = '` prints exactly one line, `+name = "security-framework"` [run]
-- ⬜ `git diff --exit-code milestone/keychain-persistence -- pnpm-lock.yaml` exits 0 [run]
-- ⬜ `grep -c '^#\[tauri::command(async)\]$' src-tauri/src/keyring_store.rs` prints `6` and `grep -c '^#\[tauri::command\]$' src-tauri/src/keyring_store.rs` prints `0` [static]
+- ✅ `(cd src-tauri && cargo test --lib)` passes, including `keyring_store::tests::backend_persists_until_delete` [run]
+- ✅ `(cd src-tauri && cargo tree -e features -i keyring)` lists `keyring feature "apple-native"` [run]
+- ✅ `git diff milestone/keychain-persistence -- src-tauri/Cargo.lock | grep '^+name = '` prints exactly one line, `+name = "security-framework"` [run]
+- ✅ `git diff --exit-code milestone/keychain-persistence -- pnpm-lock.yaml` exits 0 [run]
+- ✅ `grep -c '^#\[tauri::command(async)\]$' src-tauri/src/keyring_store.rs` prints `6` and `grep -c '^#\[tauri::command\]$' src-tauri/src/keyring_store.rs` prints `0` [static]
 **References**: `__reports__/api_key_storage/01-keychain_signing_measurement_v0.md` (why, and the lockfile expectation); keyring 3.6.3 `src/lib.rs` (`pub use macos as default` with `apple-native`, `pub use mock as default` without), `src/credential.rs` (`CredentialBuilderApi::persistence`, `CredentialPersistence::{EntryOnly, UntilDelete}`); `~/.cargo/registry/src/*/tauri-macros-2.5.5/src/command/wrapper.rs` (`ExecutionContext::Blocking` vs `Async`)
 
 ## Step 1: Pin the backend with a failing test

@@ -2,7 +2,7 @@
 
 **Goal**: Land the campaign on `main`, cut v0.2.1 with honest release notes, and close the paper trail. Coordinator-direct, with every merge gated by the maintainer.
 **Pre-conditions**:
-- [ ] Both L1 leaves merged into `milestone/keychain-persistence`, and the maintainer's `pnpm e2e:native` run on that tip passed
+- [x] Both L1 leaves merged into `milestone/keychain-persistence`, and the maintainer's `pnpm e2e:native` run on that tip passed
 **Success Gates**:
 - ⬜ `__reports__/api_key_storage/00-keyring_mock_backend_v0.md` front matter reads `status: resolved`, and `__reports__/api_key_storage/README.md` lists round 01 as latest [static]
 - ⬜ The integration PR into `main` is merged by the maintainer, and `uvx --from commitizen==4.19.1 cz bump --get-next` on `main` prints `0.2.1` [run]

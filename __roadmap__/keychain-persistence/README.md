@@ -15,11 +15,11 @@ API keys saved in Settings survive relaunches and updates, the Keychain dialog n
 - [x] Environment contract measured in a fresh hand-made worktree: `pnpm install --frozen-lockfile && pnpm build && (cd src-tauri && cargo test --lib)` green, with the cargo paths inside that worktree (2026-10-06, experiment worktree preflight: 43 passed, target dir `experiment-keychain-signing/src-tauri/target`)
 
 ## Success Gates
-- ⬜ `(cd src-tauri && cargo test --lib)` passes on the integration tip, including `backend_persists_until_delete` [run]
-- ⬜ `(cd src-tauri && cargo tree -e features -i keyring)` lists `apple-native` [run]
-- ⬜ `git diff 57c225b -- src-tauri/Cargo.lock | grep '^+name = '` prints exactly `+name = "security-framework"` (the iOS-only 2.11.1) [run]
-- ⬜ `git diff --exit-code 57c225b -- pnpm-lock.yaml` exits 0 [run]
-- ⬜ `pnpm e2e:native` run by the maintainer on the integration tip exits 0, with `KEYCHAIN_AFTER_UPDATE=` and `PASS  ipc stays responsive while the keychain read is pending` in the transcript [behavioral]
+- ✅ `(cd src-tauri && cargo test --lib)` passes on the integration tip, including `backend_persists_until_delete` [run]
+- ✅ `(cd src-tauri && cargo tree -e features -i keyring)` lists `apple-native` [run]
+- ✅ `git diff 57c225b -- src-tauri/Cargo.lock | grep '^+name = '` prints exactly `+name = "security-framework"` (the iOS-only 2.11.1) [run]
+- ✅ `git diff --exit-code 57c225b -- pnpm-lock.yaml` exits 0 [run]
+- ✅ `pnpm e2e:native` run by the maintainer on the integration tip exits 0, with `KEYCHAIN_AFTER_UPDATE=` and `PASS  ipc stays responsive while the keychain read is pending` in the transcript [behavioral]
 - ⬜ `uvx --from commitizen==4.19.1 cz bump --get-next` prints `0.2.1` before the release PR [run]
 - ⬜ `curl -fsSL https://github.com/LittleCoinCoin/sift/releases/latest/download/latest.json` returns version `0.2.1` [run]
 
@@ -45,9 +45,9 @@ API keys saved in Settings survive relaunches and updates, the Keychain dialog n
 ## Status
 ```mermaid
 graph TD
-    apple_native_backend[Apple Native Backend]:::inprogress
-    e2e_keychain_assertions[E2E Keychain Assertions]:::inprogress
-    next[Release v0.2.1]:::planned
+    apple_native_backend[Apple Native Backend]:::done
+    e2e_keychain_assertions[E2E Keychain Assertions]:::done
+    next[Release v0.2.1]:::inprogress
     classDef done       fill:#166534,color:#bbf7d0
     classDef inprogress fill:#854d0e,color:#fef08a
     classDef planned    fill:#374151,color:#e5e7eb
@@ -58,9 +58,9 @@ graph TD
 ## Nodes
 | Node | Type | Status |
 |:-----|:-----|:-------|
-| `apple_native_backend.md` | 📄 Leaf Task | 🔄 In Progress |
-| `e2e_keychain_assertions.md` | 📄 Leaf Task | 🔄 In Progress |
-| `next/` | 📁 Directory | ⬜ Planned |
+| `apple_native_backend.md` | 📄 Leaf Task | ✅ Done |
+| `e2e_keychain_assertions.md` | 📄 Leaf Task | ✅ Done |
+| `next/` | 📁 Directory | 🔄 In Progress |
 
 ## Amendment Log
 | ID | Date | Source | Nodes Added | Rationale |
