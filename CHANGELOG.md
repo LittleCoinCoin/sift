@@ -6,6 +6,11 @@
 - **backend**: keep the window responsive while the keychain prompts
 - **backend**: store API keys in the macOS Keychain instead of a mock
 
+### Upgrade notes
+
+- **Enter your API keys once more.** Earlier versions never actually saved them, so Sift asks for them again after this update.
+- **After each update, macOS asks for your login keychain password, once for each saved API key.** The OCR key and the text-processing key are stored separately. Choose **Always Allow** and Sift won't ask again until the next update. The window stays usable while the dialog is open.
+
 ## v0.2.0 (2026-10-05)
 
 ### Added
