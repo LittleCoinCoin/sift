@@ -9,7 +9,7 @@ produced-by: experiment branch `experiment/keychain-signing` (d44fd2d enables `a
 date: 2026-10-06
 domain: code
 confidence: confirmed for the outcome (two valid runs, both exit 0, both dialogs observed by the maintainer); inferred for the cause
-decision: ship the real Keychain with ad-hoc signing; one prompt per update is documented; Developer ID deferred
+decision: ship the real Keychain with ad-hoc signing; one prompt per stored key per update is documented; Developer ID deferred
 ---
 
 ## Headline
@@ -47,4 +47,4 @@ Since macOS 10.12, a login-keychain item carries a *partition list* naming the c
 - Enable `apple-native`. Users re-enter their API keys once, because nothing was ever persisted before.
 - Run the six keyring commands off the main thread (`#[tauri::command(async)]`). Tauri runs blocking commands on the main thread, so a pending password dialog during `get_api_key` (`SettingsPanel.svelte` calls it on mount) can freeze the window. The maintainer reported "nothing was happening" until they answered.
 - Make the E2E assert the persisted write and record the post-update outcome (`blocked` is expected under ad-hoc), instead of printing it.
-- Note in the CHANGELOG that after each update macOS asks once for the login keychain password ("Always Allow").
+- Note in the CHANGELOG that after each update macOS asks for the login keychain password once per stored key ("Always Allow"). The OCR and text-processing keys are separate Keychain items, and "Always Allow" authorizes one item only. The E2E stores only the OCR key, so it shows one prompt.
