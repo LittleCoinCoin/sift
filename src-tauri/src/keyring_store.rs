@@ -81,4 +81,19 @@ mod tests {
         let entry = Entry::new(SERVICE, EXTRACTION_USER);
         assert!(entry.is_ok());
     }
+
+    // Pins the backend: keyring's mock store reports EntryOnly, the macOS
+    // Keychain reports UntilDelete. Reads a builder property only; it never
+    // creates a credential, so it cannot touch or prompt the keychain.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn backend_persists_until_delete() {
+        use keyring::credential::CredentialPersistence;
+
+        let builder = keyring::default::default_credential_builder();
+        assert!(matches!(
+            builder.persistence(),
+            CredentialPersistence::UntilDelete
+        ));
+    }
 }
