@@ -327,6 +327,23 @@ run_happy_path() {
   say "booted $OLD_VERSION as pid $pid1 after $((SECONDS - t0))s (launch attempts: $LAUNCH_ATTEMPTS)"
   shot 01-booted
 
+  # The driver of $OLD_VERSION saved a key and read it back in the same process. A roundtrip
+  # alone also passes on an in-memory store, so the item must also exist in the keychain
+  # itself (attributes-only lookup: it never prompts).
+  local roundtrip=""
+  wait_for_log "keychain (roundtrip (ok|mismatch)|error)" 10 \
+    && roundtrip="$(fetch_log | grep -E ' keychain (roundtrip (ok|mismatch)|error)' | head -1 | sed 's/^[^ ]* //')"
+  if [ "$roundtrip" = "keychain roundtrip ok" ]; then
+    pass "$OLD_VERSION saved a key and read it back in the same process"
+  else
+    fail "$OLD_VERSION keychain roundtrip: ${roundtrip:-no result within 10s}"
+  fi
+  if [ "$(keychain_presence "$KEYCHAIN_SERVICE")" = present ]; then
+    pass "keychain item '$KEYCHAIN_SERVICE' written by $OLD_VERSION"
+  else
+    fail "no '$KEYCHAIN_SERVICE' keychain item after $OLD_VERSION saved a key: the key is not persisted"
+  fi
+
   local available percent_re
   available="$(copy "M.available('$NEW_VERSION')")"
   wait_for_log "toast $available\$" 40 || fail "no '$available' toast within 40s"
@@ -341,15 +358,25 @@ run_happy_path() {
   wait_for_log "click ready \\(" 15 || fail "driver never clicked Restart Now"
 
   # The relaunch is a new process; wait for it to announce itself.
+  local booted_new=0 kc_seen=0
   if wait_for_log "booted $NEW_VERSION\$" 60; then
+    booted_new=1
     say "booted $NEW_VERSION after $((SECONDS - t0))s since launch"
     shot 06-restarted
   else
     fail "restarted app never reported 'booted $NEW_VERSION'"
   fi
   # A new (old) toast would mean an update loop; the background check fires ~4 s after boot.
-  # keychain probe result also arrives in this window (a keychain dialog would block it).
-  wait_for_log_after "booted $NEW_VERSION\$" "keychain (ok|error)" 20 || { say "no keychain probe result within 20s: probe blocked"; shot 07-keychain-blocked; }
+  # The keychain probe result also arrives in this window; a keychain dialog would block it,
+  # so no result within 20 s is recorded below as KEYCHAIN_AFTER_UPDATE=blocked. Without a
+  # booted 0.2.0 there is nothing to wait for or classify; the failure is already counted.
+  if [ "$booted_new" = 1 ]; then
+    kc_seen=1
+    wait_for_log_after "booted $NEW_VERSION\$" "keychain (ok|error)" 20 || { kc_seen=0; shot 07-keychain-blocked; }
+    # The driver posts 'ipc alive' about 1 s after boot, or 'ipc slow|<ms>' if the sync
+    # command took over 2 s, whatever the read is doing. Classified from the saved log below.
+    wait_for_log_after "booted $NEW_VERSION\$" "ipc (alive\$|slow[|])" 10 || true
+  fi
   sleep 6
   local pid2; pid2="$(app_pid "$APP")"
   note_pid happy-after-restart "$pid2"
@@ -421,7 +448,37 @@ run_happy_path() {
     fail "control: the 'ready' pattern did not match the happy-path log"
   fi
 
-  say "keychain probe: $(grep -E ' keychain ' "$log" | sed 's/^[^ ]* //' | tr '\n' ';')"
+  # 7. what happened to the stored key after the update, and the IPC while that read was pending.
+  #    The first probe line after the relaunch decides; none within the 20 s wait means the
+  #    read is blocked (an answer typed into the dialog later does not change that).
+  if [ "$booted_new" = 1 ]; then
+    local kc_line="" ipc_line="" outcome ipc_msg
+    [ "$kc_seen" = 1 ] && kc_line="$(awk -v a="booted $NEW_VERSION\$" '$0 ~ a { seen = 1; next } seen && / keychain (ok|error)/ { print; exit }' "$log" | sed 's/^[^ ]* //')"
+    ipc_line="$(awk -v a="booted $NEW_VERSION\$" '$0 ~ a { seen = 1; next } seen && / ipc (alive|slow)/ { print; exit }' "$log" | sed 's/^[^ ]* //')"
+    case "$kc_line" in
+      "keychain ok")       outcome=ok ;;
+      "keychain error|"*)  outcome=error ;;
+      *)                   outcome=blocked ;;
+    esac
+    emit "KEYCHAIN_AFTER_UPDATE=$outcome"
+    case "$outcome" in
+      blocked) say "no keychain result within 20s: a login-keychain dialog is expected after an update under ad-hoc signing" ;;
+      error)   fail "the key written by $OLD_VERSION is lost or unreadable in $NEW_VERSION: ${kc_line#keychain error|}" ;;
+    esac
+    # Only 'ipc alive' (answered within 2 s, timed in the webview) proves the main thread was free.
+    case "$ipc_line" in
+      "ipc alive")
+        ipc_msg="ipc stays responsive while the keychain read is pending"
+        [ "$outcome" = ok ] && ipc_msg="$ipc_msg (no keychain read was pending, so this did not exercise the freeze)"
+        pass "$ipc_msg" ;;
+      "ipc slow|"*)
+        fail "the sync command get_settings took ${ipc_line#ipc slow|} ms (over 2000) while the keychain read was pending: the read held the main thread" ;;
+      *)
+        fail "no 'ipc alive' within 10s of the keychain read starting: a sync command (get_settings) got no answer, so the read may hold the main thread" ;;
+    esac
+  else
+    say "no 'booted $NEW_VERSION': keychain and ipc outcomes not assessed"
+  fi
   kill_app "$APP"
   stop_server
 }
@@ -560,6 +617,16 @@ main() {
 
   REAL_KEYCHAIN_BEFORE="$(keychain_presence sift)"
   say "real keychain item 'sift': $REAL_KEYCHAIN_BEFORE (must be the same at the end)"
+
+  # A stale e2e item (aborted earlier run) would make the persistence assertion vacuous and
+  # could prompt on the write. Only the e2e service is ever touched, never "sift".
+  if [ "$(keychain_presence "$KEYCHAIN_SERVICE")" = present ]; then
+    say "stale '$KEYCHAIN_SERVICE' keychain item from an earlier run: removing it"
+    local i
+    for i in 1 2 3 4; do security delete-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1 || break; done
+    [ "$(keychain_presence "$KEYCHAIN_SERVICE")" = absent ] \
+      || die "could not remove the stale '$KEYCHAIN_SERVICE' keychain item; delete it by hand"
+  fi
 
   if [ "$skip_build" != 1 ]; then
     local stamp; stamp="$(source_stamp)"
