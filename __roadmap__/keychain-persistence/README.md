@@ -33,6 +33,13 @@ API keys saved in Settings survive relaunches and updates, the Keychain dialog n
   - `e2e_keychain_assertions` owns `scripts/e2e-updater.sh` and `src/lib/e2e/updater-driver.ts`.
   - `release_v0_2_1` owns `CHANGELOG.md`, `__reports__/api_key_storage/README.md`, the 00 report's status, and the Reminders.
 - **Merge commits:** subject `Merge task/<leaf> into milestone/keychain-persistence`. The body is WHY prose and never starts a line with `type(scope):`.
+- **Handoff (2026-10-06, before L1 dispatch).** The coordinator works in worktree `table-letter-s-to-p-abd036` on `milestone/keychain-persistence`.
+  - Next: hand-make worktrees `task/apple_native_backend` and `task/e2e_keychain_assertions` from the integration tip, and measure the environment contract in one of them.
+  - Then dispatch both implementers in parallel (Sonnet, `model: "sonnet"`), with briefs carrying the toolchain (local pnpm, cargo, uv; no mamba), the colgrep `index_build` and `paths=[<worktree>]` note, and "report spec defects, don't implement them".
+  - Verifier attack targets:
+    - backend: does the persistence test really fail on the mock? Does `command(async)` change any IPC contract or error string?
+    - e2e: can `blocked` be misread as `ok` or `error`? Does `ipc alive` really fail if the main thread is held? Is the isolation guard still sound?
+  - After both merge, the maintainer runs `pnpm e2e:native`.
 - **Experiment branch** `experiment/keychain-signing` (worktree `../experiment-keychain-signing`) is evidence only. It is never merged, and it is removed at campaign close.
 
 ## Status
