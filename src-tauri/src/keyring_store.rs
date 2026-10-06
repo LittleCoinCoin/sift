@@ -9,52 +9,46 @@ const SERVICE: &str = match option_env!("SIFT_KEYRING_SERVICE") {
 const USER: &str = "api-key";
 const EXTRACTION_USER: &str = "extraction-api-key";
 
-#[tauri::command(async)]
-pub fn set_api_key(key: String) -> Result<(), String> {
-    Entry::new(SERVICE, USER)
+// A Keychain call can block until the user answers an authorization dialog
+// (once per stored key after each update of an ad-hoc signed build). Run it on
+// the blocking pool so it holds neither the main thread nor an async worker.
+async fn on_blocking_pool<T: Send + 'static>(
+    f: impl FnOnce() -> keyring::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
         .map_err(|e| e.to_string())?
-        .set_password(&key)
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command(async)]
-pub fn get_api_key() -> Result<String, String> {
-    Entry::new(SERVICE, USER)
-        .map_err(|e| e.to_string())?
-        .get_password()
-        .map_err(|e| e.to_string())
+#[tauri::command]
+pub async fn set_api_key(key: String) -> Result<(), String> {
+    on_blocking_pool(move || Entry::new(SERVICE, USER)?.set_password(&key)).await
 }
 
-#[tauri::command(async)]
-pub fn delete_api_key() -> Result<(), String> {
-    Entry::new(SERVICE, USER)
-        .map_err(|e| e.to_string())?
-        .delete_credential()
-        .map_err(|e| e.to_string())
+#[tauri::command]
+pub async fn get_api_key() -> Result<String, String> {
+    on_blocking_pool(|| Entry::new(SERVICE, USER)?.get_password()).await
 }
 
-#[tauri::command(async)]
-pub fn set_extraction_api_key(key: String) -> Result<(), String> {
-    Entry::new(SERVICE, EXTRACTION_USER)
-        .map_err(|e| e.to_string())?
-        .set_password(&key)
-        .map_err(|e| e.to_string())
+#[tauri::command]
+pub async fn delete_api_key() -> Result<(), String> {
+    on_blocking_pool(|| Entry::new(SERVICE, USER)?.delete_credential()).await
 }
 
-#[tauri::command(async)]
-pub fn get_extraction_api_key() -> Result<String, String> {
-    Entry::new(SERVICE, EXTRACTION_USER)
-        .map_err(|e| e.to_string())?
-        .get_password()
-        .map_err(|e| e.to_string())
+#[tauri::command]
+pub async fn set_extraction_api_key(key: String) -> Result<(), String> {
+    on_blocking_pool(move || Entry::new(SERVICE, EXTRACTION_USER)?.set_password(&key)).await
 }
 
-#[tauri::command(async)]
-pub fn delete_extraction_api_key() -> Result<(), String> {
-    Entry::new(SERVICE, EXTRACTION_USER)
-        .map_err(|e| e.to_string())?
-        .delete_credential()
-        .map_err(|e| e.to_string())
+#[tauri::command]
+pub async fn get_extraction_api_key() -> Result<String, String> {
+    on_blocking_pool(|| Entry::new(SERVICE, EXTRACTION_USER)?.get_password()).await
+}
+
+#[tauri::command]
+pub async fn delete_extraction_api_key() -> Result<(), String> {
+    on_blocking_pool(|| Entry::new(SERVICE, EXTRACTION_USER)?.delete_credential()).await
 }
 
 #[cfg(test)]
