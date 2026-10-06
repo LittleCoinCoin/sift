@@ -9,6 +9,11 @@ import { INSTALL_MESSAGES } from '../stores/updater-errors';
 const LOG_URL = 'http://127.0.0.1:1430/e2e-log';
 const TARGET_VERSION = '0.2.0';
 const PROBE_KEY = 'e2e-probe';
+// How long the keychain read is left pending before the IPC liveness check.
+const IPC_PROBE_DELAY_MS = 1000;
+// A sync command answering later than this means the main thread was held, so the
+// answer after the dialog is dismissed does not count as 'alive'.
+const IPC_ALIVE_MAX_MS = 2000;
 // Gives the orchestrator time to screenshot each stage before the click moves on.
 const CLICK_DELAY_MS = 2000;
 
@@ -61,7 +66,25 @@ async function probeKeychain(version: string): Promise<void> {
       const back = await invoke<string>('get_api_key');
       await post(back === PROBE_KEY ? 'keychain roundtrip ok' : 'keychain roundtrip mismatch');
     } else {
-      const value = await invoke<string>('get_api_key');
+      // The read may block in a login-keychain dialog after an update. Start it without
+      // awaiting, then prove the IPC still answers: get_settings is a sync command, so it
+      // runs on the main thread, and a pending read that held that thread would keep
+      // 'ipc alive' from being posted in time.
+      const pending = invoke<string>('get_api_key');
+      pending.catch(() => undefined); // handled below; this only keeps an early rejection quiet
+      await new Promise<void>((resolve) => setTimeout(resolve, IPC_PROBE_DELAY_MS));
+      const askedAt = performance.now();
+      try {
+        await invoke('get_settings');
+      } catch {
+        // an error reply is still an answer
+      } finally {
+        // Timed here, not by the script: a frozen thread answers as soon as the dialog is
+        // dismissed, and only the elapsed time tells that apart from a live one.
+        const elapsed = Math.round(performance.now() - askedAt);
+        await post(elapsed <= IPC_ALIVE_MAX_MS ? 'ipc alive' : `ipc slow|${elapsed}`);
+      }
+      const value = await pending;
       await post(value === PROBE_KEY ? 'keychain ok' : 'keychain error|unexpected value');
     }
   } catch (err) {
