@@ -9,7 +9,7 @@ const SERVICE: &str = match option_env!("SIFT_KEYRING_SERVICE") {
 const USER: &str = "api-key";
 const EXTRACTION_USER: &str = "extraction-api-key";
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_api_key(key: String) -> Result<(), String> {
     Entry::new(SERVICE, USER)
         .map_err(|e| e.to_string())?
@@ -17,7 +17,7 @@ pub fn set_api_key(key: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_api_key() -> Result<String, String> {
     Entry::new(SERVICE, USER)
         .map_err(|e| e.to_string())?
@@ -25,7 +25,7 @@ pub fn get_api_key() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_api_key() -> Result<(), String> {
     Entry::new(SERVICE, USER)
         .map_err(|e| e.to_string())?
@@ -33,7 +33,7 @@ pub fn delete_api_key() -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_extraction_api_key(key: String) -> Result<(), String> {
     Entry::new(SERVICE, EXTRACTION_USER)
         .map_err(|e| e.to_string())?
@@ -41,7 +41,7 @@ pub fn set_extraction_api_key(key: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_extraction_api_key() -> Result<String, String> {
     Entry::new(SERVICE, EXTRACTION_USER)
         .map_err(|e| e.to_string())?
@@ -49,7 +49,7 @@ pub fn get_extraction_api_key() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_extraction_api_key() -> Result<(), String> {
     Entry::new(SERVICE, EXTRACTION_USER)
         .map_err(|e| e.to_string())?
