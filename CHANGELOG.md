@@ -1,3 +1,11 @@
+## v0.2.1 (2026-10-06)
+
+### Fixed
+
+- **backend**: run keychain calls on the blocking pool, not an async worker
+- **backend**: keep the window responsive while the keychain prompts
+- **backend**: store API keys in the macOS Keychain instead of a mock
+
 ## v0.2.0 (2026-10-05)
 
 ### Added
